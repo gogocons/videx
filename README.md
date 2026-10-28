@@ -72,9 +72,11 @@ videx/
 
 Individual bookmarks remain readable on their own. Their embedded thumbnail and curated metadata do not require a network connection; external links do. The back-to-library link assumes the bookmark remains in the indexed archive tree.
 
-## Privacy and backups
+## Bookmark storage and backups
 
-**Your bookmarks are not part of this source repository.** `.gitignore` excludes the local `bookmarks/` directory, generated `index.html`, caches and upgrade backup directories. Bookmarks can contain personal choices and video metadata; review `git status` and `git diff --cached --name-only` before publishing. Git ignore rules do not remove files already committed. Back up the library separately from the source code.
+Videx stores bookmarks locally as standalone HTML files in the `bookmarks/` directory. The generated `index.html` provides an offline-searchable interface to your collection.
+
+These files are excluded from Git tracking by default. Your bookmark collection is independent of the Videx source code, so be sure to back it up separately.
 
 ## Project history and roadmap
 
