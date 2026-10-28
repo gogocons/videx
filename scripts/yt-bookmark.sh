@@ -2,13 +2,14 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-OUTPUT_DIR="$PROJECT_DIR/bookmarks"
+LIBRARY_DIR="$PROJECT_DIR"
 usage() {
   cat <<'EOF'
-Usage: yt-bookmark.sh [--output DIRECTORY] [--overwrite] URL
+Usage: yt-bookmark.sh [--output LIBRARY_DIRECTORY] [--overwrite] URL
 
 Create one self-contained HTML bookmark from a YouTube URL.
-Default output: <project>/bookmarks/
+Default library: <project>/
+Bookmarks are saved under <library>/bookmarks/<channel>/.
 EOF
 }
 OVERWRITE=0
@@ -16,7 +17,7 @@ URL=""
 while (($#)); do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    -o|--output) (($# >= 2)) || { echo 'ERROR: --output needs a directory' >&2; exit 2; }; OUTPUT_DIR="$2"; shift 2 ;;
+    -o|--output) (($# >= 2)) || { echo 'ERROR: --output needs a directory' >&2; exit 2; }; LIBRARY_DIR="$2"; shift 2 ;;
     --overwrite) OVERWRITE=1; shift ;;
     --) shift; break ;;
     -*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -27,8 +28,17 @@ if (($#)); then if [[ -n "$URL" || $# -ne 1 ]]; then usage >&2; exit 2; fi; URL=
 [[ -n "$URL" ]] || { usage >&2; exit 2; }
 for cmd in yt-dlp python3; do command -v "$cmd" >/dev/null || { echo "ERROR: Missing $cmd" >&2; exit 1; }; done
 [[ -f "$SCRIPT_DIR/yt-bookmark-generate.py" ]] || { echo 'ERROR: Missing yt-bookmark-generate.py' >&2; exit 1; }
+# --output specifies the library root, not the bookmarks directory.
+if [[ "$LIBRARY_DIR" != "$PROJECT_DIR" && "${LIBRARY_DIR%/}" == */bookmarks ]]; then
+  echo 'ERROR: --output expects the library root, not its bookmarks/ directory.' >&2
+  exit 2
+fi
+
+mkdir -p "$LIBRARY_DIR"
+LIBRARY_DIR="$(cd -- "$LIBRARY_DIR" && pwd)"
+
+OUTPUT_DIR="$LIBRARY_DIR/bookmarks"
 mkdir -p "$OUTPUT_DIR"
-OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd)"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf -- "$tmpdir"' EXIT
 printf '[1/4] Fetching metadata and thumbnail...\n'
@@ -63,10 +73,10 @@ if [[ -e "$output" && "$OVERWRITE" -ne 1 ]]; then
   exit 1
 fi
 printf '[3/4] Building bookmark: %s\n' "$title"
-back_link="$(python3 - "$output" "$OUTPUT_DIR" <<'PYBACK'
+back_link="$(python3 - "$output" "$LIBRARY_DIR" <<'PYBACK'
 import os, sys
 output, root = sys.argv[1:]
-print(os.path.relpath(os.path.join(os.path.dirname(root), "index.html"), os.path.dirname(output)))
+print(os.path.relpath(os.path.join(root, "index.html"), os.path.dirname(output)))
 PYBACK
 )"
 python3 -B "$SCRIPT_DIR/yt-bookmark-generate.py" "$info_json" "$thumbnail" "$output" --back-link "$back_link"
