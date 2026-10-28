@@ -9,6 +9,20 @@
 
 Videx began as a way to keep useful YouTube video references without depending on YouTube's bookmarking interface. It saves **metadata and thumbnails, not video files**, as standalone HTML pages and builds a searchable offline index. The project is currently focused on YouTube and uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for extraction. Videx is not affiliated with YouTube or Google.
 
+## Screenshots
+
+### Video Library
+
+Browse, search, filter, and sort your saved video references without an internet connection.
+
+![Videx video library](docs/screenshots/library.png)
+
+### Individual Bookmarks
+
+Each bookmark is a standalone HTML page containing the video's thumbnail, description, metadata, and links to the original video.
+
+![Videx individual bookmark](docs/screenshots/bookmark.png)
+
 ## Current features (v0.1.0)
 
 - Save a single video's title, channel, description, chapters, dates, tags, historical counts and thumbnail in a self-contained HTML page.
