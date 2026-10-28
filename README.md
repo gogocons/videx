@@ -1,5 +1,10 @@
 # Videx
 
+![License: MIT](https://img.shields.io/badge/License-MIT-blue)
+![Version](https://img.shields.io/badge/Version-v0.1.0-red)
+![Python](https://img.shields.io/badge/Python-3-blue)
+![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-lightgrey)
+
 **An offline-first video bookmarking and reference library.**
 
 Videx began as a way to keep useful YouTube video references without depending on YouTube's bookmarking interface. It saves **metadata and thumbnails, not video files**, as standalone HTML pages and builds a searchable offline index. The project is currently focused on YouTube and uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for extraction. Videx is not affiliated with YouTube or Google.
