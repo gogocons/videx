@@ -1,0 +1,20 @@
+# Private archive and generated dashboard
+/bookmarks/
+/index.html
+/.index.html.tmp
+
+# Migration backups and scratch output
+/*-backup-*/
+*.bak
+*.tmp
+
+# Python / OS generated files
+__pycache__/
+*.py[cod]
+.DS_Store
+__MACOSX/
+._*
+
+# Local configuration and secrets (if introduced later)
+.env
+.env.*
