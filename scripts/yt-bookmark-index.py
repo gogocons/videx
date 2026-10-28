@@ -63,7 +63,7 @@ def thumbnail_preview(data_uri, width):
         return data_uri
 
 
-def parse_bookmark(path, root, width):
+def parse_bookmark(path, root, width, library_root):
     parser = BookmarkParser()
     parser.feed(path.read_text(encoding='utf-8'))
     if not parser.metadata_chunks:
@@ -78,9 +78,9 @@ def parse_bookmark(path, root, width):
     uploaded = metadata.get('upload_date') or ''
     if not re.fullmatch(r'\d{8}', str(uploaded)):
         uploaded = ''
-    relative = path.relative_to(root).as_posix()
+    relative = path.relative_to(library_root).as_posix()
     # URL encode each path segment, preserving the slashes between directories.
-    href = quote(root.name, safe='') + '/' + '/'.join(quote(segment, safe='') for segment in relative.split('/'))
+    href = '/'.join(quote(segment, safe='') for segment in relative.split('/'))
     return {
         'title': str(metadata.get('title') or path.stem),
         'channel': str(metadata.get('uploader') or metadata.get('channel') or path.parent.name),
@@ -158,9 +158,18 @@ def main():
     parser.add_argument('directory', nargs='?', default=str(Path(__file__).resolve().parent.parent / 'bookmarks'), help='Bookmark root directory (default: project bookmarks/ directory)')
     parser.add_argument('--thumbnail-width', type=int, default=360, help='Embedded preview width in pixels (default: 360)')
     args = parser.parse_args()
-    root = Path(args.directory).expanduser().resolve()
-    if not root.is_dir():
-        parser.error(f'Not a directory: {root}')
+    selected = Path(args.directory).expanduser().resolve()
+
+    if not selected.is_dir():
+        parser.error(f'Not a directory: {selected}')
+
+    # Support both a library root and its bookmarks/ subdirectory.
+    if selected.name == 'bookmarks':
+        root = selected
+        library_root = selected.parent
+    else:
+        library_root = selected
+        root = selected / 'bookmarks' if (selected / 'bookmarks').is_dir() else selected
     if args.thumbnail_width < 64 or args.thumbnail_width > 1920:
         parser.error('--thumbnail-width must be between 64 and 1920')
     if Image is None:
@@ -171,7 +180,7 @@ def main():
     skipped = 0
     for path in paths:
         try:
-            items.append(parse_bookmark(path, root, args.thumbnail_width))
+            items.append(parse_bookmark(path, root, args.thumbnail_width, library_root))
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             skipped += 1
             print(f'  Skipping {path.relative_to(root)}: {exc}', file=sys.stderr)
@@ -182,8 +191,8 @@ def main():
     # Escape < so user-supplied metadata cannot terminate the JSON script element.
     payload = payload.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
     html = HTML_TEMPLATE.replace('__BOOKMARK_DATA__', payload)
-    output = root.parent / 'index.html'
-    temp = root.parent / '.index.html.tmp'
+    output = library_root / 'index.html'
+    temp = library_root / '.index.html.tmp'
     try:
         temp.write_text(html, encoding='utf-8')
         temp.replace(output)
