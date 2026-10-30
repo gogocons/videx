@@ -8,13 +8,15 @@ LIBRARY_DIR="$PROJECT_DIR"
 usage() {
   cat <<'EOF'
 Usage: yt-bookmark.sh [--output LIBRARY_DIRECTORY] [--overwrite] [--re-index] URL
+       yt-bookmark.sh [--output LIBRARY_DIRECTORY] [--overwrite] [--re-index] --id TEXT
 
-Create one self-contained HTML bookmark from a YouTube URL.
+Create one self-contained HTML bookmark from a YouTube URL or video ID.
 Default library: <project>/
 Bookmarks are saved under <library>/bookmarks/<channel>/.
 
 Options:
   -o, --output DIR  Select a library root (not its bookmarks/ directory)
+      --id TEXT     Accept a bare 11-character ID or [VIDEO_ID] in text
       --overwrite   Refresh an existing video ID at its original file path
       --re-index    Rebuild the selected library index after capture or skip
   -h, --help        Show this help
@@ -26,6 +28,7 @@ EOF
 
 OVERWRITE=0
 RE_INDEX=0
+ID_MODE=0
 URL=""
 while (($#)); do
   case "$1" in
@@ -35,10 +38,16 @@ while (($#)); do
       LIBRARY_DIR="$2"; shift 2 ;;
     --overwrite) OVERWRITE=1; shift ;;
     --re-index) RE_INDEX=1; shift ;;
+    --id)
+      ((ID_MODE == 0)) || { echo 'ERROR: --id specified more than once' >&2; exit 2; }
+      (($# >= 2)) || { echo 'ERROR: --id needs a video ID or text' >&2; exit 2; }
+      ID_MODE=1
+      if [[ -n "$URL" ]]; then echo 'ERROR: Supply only one input' >&2; exit 2; fi
+      URL="$2"; shift 2 ;;
     --) shift; break ;;
     -*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
     *)
-      if [[ -n "$URL" ]]; then echo 'ERROR: Supply one URL' >&2; exit 2; fi
+      if [[ -n "$URL" ]]; then echo 'ERROR: Supply only one input' >&2; exit 2; fi
       URL="$1"; shift ;;
   esac
 done
@@ -49,6 +58,30 @@ fi
 [[ -n "$URL" ]] || { usage >&2; exit 2; }
 
 command -v python3 >/dev/null || { echo 'ERROR: Missing python3' >&2; exit 1; }
+
+# --id accepts exactly one bare ID or one distinct bracketed ID in text.
+# Reject ambiguous inputs rather than accidentally bookmarking another video.
+if ((ID_MODE)); then
+  video_id="$(python3 - "$URL" <<'PYID'
+import re
+import sys
+
+value = sys.argv[1].strip()
+if re.fullmatch(r"[A-Za-z0-9_-]{11}", value):
+    print(value)
+else:
+    matches = set(re.findall(r"\[([A-Za-z0-9_-]{11})\]", value))
+    if len(matches) == 1:
+        print(next(iter(matches)))
+    else:
+        message = ("Multiple distinct bracketed video IDs found"
+                   if matches else "No valid YouTube video ID found")
+        print(f"ERROR: {message}", file=sys.stderr)
+        sys.exit(2)
+PYID
+  )" || exit 2
+  URL="https://www.youtube.com/watch?v=$video_id"
+fi
 for file in yt-bookmark-generate.py yt-bookmark-find.py; do
   [[ -f "$SCRIPT_DIR/$file" ]] || { echo "ERROR: Missing $file" >&2; exit 1; }
 done
