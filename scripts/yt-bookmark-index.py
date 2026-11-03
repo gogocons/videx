@@ -125,7 +125,7 @@ a{color:inherit}.title a{text-decoration:none}.title a:hover{text-decoration:und
 <header><div class="brand"><span class="play" aria-hidden="true">▶</span><div><h1>Videx</h1><div class="sub">Your offline video reference library</div></div></div><div class="stats" id="stats"></div></header>
 <div class="toolbar">
 <input id="search" type="search" placeholder="Search titles, channels, descriptions…" aria-label="Search bookmarks" autocomplete="off">
-<select id="channel" aria-label="Filter channel"><option value="">All channels</option></select>
+<select id="channel" aria-label="Filter channel"><option value="">All Channels</option></select>
 <select id="sort" aria-label="Sort bookmarks"><option value="upload-desc">Newest upload</option><option value="upload-asc">Oldest upload</option><option value="title-asc">Title A–Z</option><option value="title-desc">Title Z–A</option><option value="channel-asc">Channel A–Z</option></select>
 </div><div class="count" id="count" aria-live="polite"></div><section class="grid" id="grid" aria-label="Bookmarks"></section><div class="empty" id="empty" hidden>No matching bookmarks found.</div><div class="footer" id="footer"></div>
 </main>
@@ -135,8 +135,35 @@ a{color:inherit}.title a{text-decoration:none}.title a:hover{text-decoration:und
 const data=JSON.parse(document.getElementById('bookmark-data').textContent);
 const items=data.items;
 const search=document.getElementById('search'),channel=document.getElementById('channel'),sort=document.getElementById('sort'),grid=document.getElementById('grid'),count=document.getElementById('count'),empty=document.getElementById('empty');
-const channels=[...new Set(items.map(x=>x.channel))].sort((a,b)=>a.localeCompare(b));
-for(const name of channels){const opt=document.createElement('option');opt.value=name;opt.textContent=name;channel.append(opt)}
+// Count bookmarks belonging to each channel.
+const channelCounts = new Map();
+
+for (const item of items) {
+    channelCounts.set(
+        item.channel,
+        (channelCounts.get(item.channel) || 0) + 1
+    );
+}
+
+// Preserve the complete channel list for library statistics.
+const channels = [...channelCounts.keys()]
+    .sort((a, b) => a.localeCompare(b));
+
+// Add the Single Entries filter.
+const singleOption = document.createElement('option');
+singleOption.value = '__single_entries__';
+singleOption.textContent = 'Single Entries';
+channel.append(singleOption);
+
+// Add individual channels with at least two bookmarks.
+for (const name of channels) {
+    if (channelCounts.get(name) < 2) continue;
+
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    channel.append(opt);
+}
 document.getElementById('stats').textContent=`${items.length.toLocaleString()} bookmarks · ${channels.length.toLocaleString()} channels`;
 document.getElementById('footer').textContent=`Index generated ${data.generatedAt} · Offline archive`;
 function duration(seconds){if(seconds==null)return '';const n=Math.floor(seconds),h=Math.floor(n/3600),m=Math.floor(n%3600/60),s=n%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`}
@@ -145,7 +172,26 @@ function node(tag,cls,txt){const el=document.createElement(tag);if(cls)el.classN
 function link(label,href){const a=node('a','',label);a.href=href;return a}
 function makeCard(x){const card=node('article','card');const imageLink=link('',x.href);imageLink.className='thumb-link';imageLink.setAttribute('aria-label',`Open archived bookmark: ${x.title}`);if(x.thumbnail){const img=node('img');img.src=x.thumbnail;img.alt='';img.loading='lazy';imageLink.append(img)}else{imageLink.append(node('span','muted','No thumbnail'))}if(x.duration!=null)imageLink.append(node('span','duration',duration(x.duration)));card.append(imageLink);
 const details=node('div','details');const title=node('h2','title');title.append(link(x.title,x.href));details.append(title,node('div','channel',x.channel));const dateText=x.uploadDate?`Uploaded ${date(x.uploadDate)}`:'Upload date unavailable';details.append(node('div','meta',dateText));const actions=node('div','actions');actions.append(link('Open bookmark',x.href));if(/^https?:\/\//i.test(x.url)){const external=link('YouTube ↗',x.url);external.target='_blank';external.rel='noopener noreferrer';actions.append(external)}details.append(actions);card.append(details);return card}
-function render(){const q=search.value.trim().toLocaleLowerCase(),c=channel.value;let matches=items.filter(x=>(!c||x.channel===c)&&(!q||[x.title,x.channel,x.description,x.id].some(v=>v.toLocaleLowerCase().includes(q))));const s=sort.value;
+function render() {
+    const q = search.value.trim().toLocaleLowerCase();
+    const c = channel.value;
+
+    let matches = items.filter(x => {
+        const channelMatch =
+            !c ||
+            (c === '__single_entries__'
+                ? channelCounts.get(x.channel) === 1
+                : x.channel === c);
+
+        const searchMatch =
+            !q ||
+            [x.title, x.channel, x.description, x.id]
+                .some(v => v.toLocaleLowerCase().includes(q));
+
+        return channelMatch && searchMatch;
+    });
+
+    const s = sort.value;
 matches.sort((a,b)=>{switch(s){case 'upload-desc':return b.uploadDate.localeCompare(a.uploadDate);case 'upload-asc':return a.uploadDate.localeCompare(b.uploadDate);case 'title-asc':return a.title.localeCompare(b.title);case 'title-desc':return b.title.localeCompare(a.title);case 'channel-asc':return a.channel.localeCompare(b.channel);default:return b.uploadDate.localeCompare(a.uploadDate)}});
 count.textContent=`Showing ${matches.length.toLocaleString()} of ${items.length.toLocaleString()} bookmarks`;empty.hidden=matches.length!==0;grid.replaceChildren();const fragment=document.createDocumentFragment();for(const item of matches)fragment.append(makeCard(item));grid.append(fragment)}
 search.addEventListener('input',render);channel.addEventListener('change',render);sort.addEventListener('change',render);render();
