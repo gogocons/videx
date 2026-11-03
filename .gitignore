@@ -2,6 +2,7 @@
 /bookmarks/
 /index.html
 /.index.html.tmp
+catalog.json
 
 # Migration backups and scratch output
 /*-backup-*/
@@ -11,6 +12,7 @@
 # Python / OS generated files
 __pycache__/
 *.py[cod]
+.venv/
 .DS_Store
 __MACOSX/
 ._*
