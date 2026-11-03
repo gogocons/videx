@@ -7,8 +7,8 @@ LIBRARY_DIR="$PROJECT_DIR"
 
 usage() {
   cat <<'EOF'
-Usage: yt-bookmark.sh [--output LIBRARY_DIRECTORY] [--overwrite] [--re-index] URL
-       yt-bookmark.sh [--output LIBRARY_DIRECTORY] [--overwrite] [--re-index] --id TEXT
+Usage: yt-bookmark.sh [--output LIBRARY_DIRECTORY] [--overwrite] [--re-index] [--tag TAG ...] [--apply] URL
+       yt-bookmark.sh [--output LIBRARY_DIRECTORY] [--overwrite] [--re-index] [--tag TAG ...] [--apply] --id TEXT
 
 Create one self-contained HTML bookmark from a YouTube URL or video ID.
 Default library: <project>/
@@ -17,6 +17,8 @@ Bookmarks are saved under <library>/bookmarks/<channel>/.
 Options:
   -o, --output DIR  Select a library root (not its bookmarks/ directory)
       --id TEXT     Accept a bare 11-character ID or [VIDEO_ID] in text
+      --tag TAG     Add a tag (repeat for multiple tags)
+      --apply       Apply tag changes to existing bookmarks (default: preview)
       --overwrite   Refresh an existing video ID at its original file path
       --re-index    Rebuild the selected library index after capture or skip
   -h, --help        Show this help
@@ -28,6 +30,8 @@ EOF
 
 OVERWRITE=0
 RE_INDEX=0
+APPLY=0
+TAGS=()
 ID_MODE=0
 URL=""
 while (($#)); do
@@ -37,6 +41,10 @@ while (($#)); do
       (($# >= 2)) || { echo 'ERROR: --output needs a directory' >&2; exit 2; }
       LIBRARY_DIR="$2"; shift 2 ;;
     --overwrite) OVERWRITE=1; shift ;;
+    --apply) APPLY=1; shift ;;
+    --tag)
+      (($# >= 2)) && [[ -n "${2//[[:space:]]/}" ]] || { echo 'ERROR: --tag needs a nonempty value' >&2; exit 2; }
+      TAGS+=("$2"); shift 2 ;;
     --re-index) RE_INDEX=1; shift ;;
     --id)
       ((ID_MODE == 0)) || { echo 'ERROR: --id specified more than once' >&2; exit 2; }
@@ -85,6 +93,9 @@ fi
 for file in yt-bookmark-generate.py yt-bookmark-find.py; do
   [[ -f "$SCRIPT_DIR/$file" ]] || { echo "ERROR: Missing $file" >&2; exit 1; }
 done
+if ((${#TAGS[@]})); then
+  [[ -f "$SCRIPT_DIR/yt-bookmark-tag.py" ]] || { echo 'ERROR: Missing yt-bookmark-tag.py' >&2; exit 1; }
+fi
 if ((RE_INDEX)); then
   [[ -f "$SCRIPT_DIR/yt-bookmark-index.py" ]] || { echo 'ERROR: Missing yt-bookmark-index.py' >&2; exit 1; }
 fi
@@ -118,12 +129,48 @@ lookup() {
   esac
 }
 
+# A new capture already writes to disk, so its requested tags are applied
+# automatically. For existing bookmarks, tags are previewed unless --apply.
+# The tag utility validates membership and manages catalog backups.
+tag_existing() {
+  local vid="$1"
+  if ((${#TAGS[@]})); then
+    if ((APPLY)); then
+      python3 -B "$SCRIPT_DIR/yt-bookmark-tag.py" "$LIBRARY_DIR" add "$vid" "${TAGS[@]}" --apply
+    else
+      python3 -B "$SCRIPT_DIR/yt-bookmark-tag.py" "$LIBRARY_DIR" add "$vid" "${TAGS[@]}"
+    fi
+  fi
+}
+tag_new() {
+  local vid="$1"
+  if ((${#TAGS[@]})); then
+    python3 -B "$SCRIPT_DIR/yt-bookmark-tag.py" "$LIBRARY_DIR" add "$vid" "${TAGS[@]}" --apply
+  fi
+}
+
 existing=""
 lookup_status=0
 existing="$(lookup --url "$URL")" || lookup_status=$?
 if ((lookup_status == 2)); then exit 1; fi
 if ((lookup_status == 0 && !OVERWRITE)); then
   printf 'SKIPPED: Video already bookmarked: %s\n' "$existing"
+  # --url may be an alternate URL; use lookup by ID from the existing file
+  # when the URL is not a simple watch URL. The tagger can only accept IDs.
+  if ((${#TAGS[@]})); then
+    known_id="$(python3 - "$existing" <<'PYKNOWN'
+import re, sys
+from pathlib import Path
+m = re.search(r'\[([A-Za-z0-9_-]{11})\]\.html$', Path(sys.argv[1]).name)
+if m: print(m.group(1))
+PYKNOWN
+)"
+    if [[ -z "$known_id" ]]; then
+      echo 'ERROR: Cannot determine ID from existing filename; use --id VIDEO_ID for tagging.' >&2
+      exit 2
+    fi
+    tag_existing "$known_id"
+  fi
   reindex
   exit 0
 fi
@@ -171,6 +218,7 @@ if ((resolved_status == 0)); then
     printf 'REFRESH: Existing bookmark: %s\n' "$output"
   else
     printf 'SKIPPED: Video already bookmarked: %s\n' "$resolved_existing"
+    tag_existing "$video_id"
     reindex
     exit 0
   fi
@@ -192,4 +240,9 @@ PYBACK
 )"
 python3 -B "$SCRIPT_DIR/yt-bookmark-generate.py" "$info_json" "$thumbnail" "$output" --back-link "$back_link"
 printf '[4/4] Complete: %s\n' "$output"
+if ((resolved_status == 0)); then
+  tag_existing "$video_id"
+else
+  tag_new "$video_id"
+fi
 reindex
