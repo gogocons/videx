@@ -108,6 +108,8 @@ def make_document(metadata, image_uri, back_href=None):
               ('Likes at capture', f"{metadata['like_count']:,}" if isinstance(metadata.get('like_count'), int) else 'Unavailable')]
     info = ''.join(f'<div class="stat"><span>{esc(k)}</span><strong>{esc(v)}</strong></div>' for k,v in fields)
     raw = json.dumps(metadata, ensure_ascii=False, indent=2).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
+    # HTML recognizes script end tags even inside JavaScript string literals.
+    clipboard_url = json.dumps(url).replace('<', '\\u003c')
     library = f'<a class="secondary" href="{esc(back_href)}">← Back to library</a>' if back_href else ''
     channel = f'<a href="{esc(channel_url)}" target="_blank" rel="noopener noreferrer">{esc(uploader)}</a>' if channel_url else esc(uploader)
     watch = f'<a class="button" href="{esc(url)}" target="_blank" rel="noopener noreferrer">▶ Watch on YouTube ↗</a>' if url else ''
@@ -137,7 +139,7 @@ a{{color:#a9c5ff}}.top{{display:flex;justify-content:space-between;align-items:c
 <section class="panel"><details><summary>Archived metadata (curated JSON)</summary><pre id="raw-json"></pre></details></section>
 <p class="foot">This is an offline archival snapshot. Counts and metadata reflect the time of capture, not live YouTube values.</p>
 <script type="application/json" id="youtube-metadata">{raw}</script>
-<script>(()=>{{const b=document.getElementById('copy-url');b.addEventListener('click',()=>{{const u={json.dumps(url)};if(navigator.clipboard&&window.isSecureContext){{navigator.clipboard.writeText(u).then(()=>{{b.textContent='Copied!'}}).catch(()=>prompt('Copy URL:',u))}}else{{prompt('Copy URL:',u)}}}});document.querySelector('details').addEventListener('toggle',e=>{{if(e.target.open)document.getElementById('raw-json').textContent=JSON.stringify(JSON.parse(document.getElementById('youtube-metadata').textContent),null,2);else document.getElementById('raw-json').textContent=''}})}})();</script>
+<script>(()=>{{const b=document.getElementById('copy-url');b.addEventListener('click',()=>{{const u={clipboard_url};if(navigator.clipboard&&window.isSecureContext){{navigator.clipboard.writeText(u).then(()=>{{b.textContent='Copied!'}}).catch(()=>prompt('Copy URL:',u))}}else{{prompt('Copy URL:',u)}}}});document.querySelector('details').addEventListener('toggle',e=>{{if(e.target.open)document.getElementById('raw-json').textContent=JSON.stringify(JSON.parse(document.getElementById('youtube-metadata').textContent),null,2);else document.getElementById('raw-json').textContent=''}})}})();</script>
 </main></body></html>'''
 
 
