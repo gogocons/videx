@@ -3,7 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-LIBRARY_DIR="$PROJECT_DIR"
+LIBRARY_DIR=""
+EXPLICIT_OUTPUT=0
 
 usage() {
   cat <<'EOF'
@@ -11,7 +12,7 @@ Usage: yt-bookmark.sh [--output LIBRARY_DIRECTORY] [--overwrite] [--re-index] [-
        yt-bookmark.sh [--output LIBRARY_DIRECTORY] [--overwrite] [--re-index] [--tag TAG ...] [--apply] --id TEXT
 
 Create one self-contained HTML bookmark from a YouTube URL or video ID.
-Default library: <project>/
+Default library: config.local.json library, otherwise <project>/
 Bookmarks are saved under <library>/bookmarks/<channel>/.
 
 Options:
@@ -39,7 +40,7 @@ while (($#)); do
     -h|--help) usage; exit 0 ;;
     -o|--output)
       (($# >= 2)) || { echo 'ERROR: --output needs a directory' >&2; exit 2; }
-      LIBRARY_DIR="$2"; shift 2 ;;
+      LIBRARY_DIR="$2"; EXPLICIT_OUTPUT=1; shift 2 ;;
     --overwrite) OVERWRITE=1; shift ;;
     --apply) APPLY=1; shift ;;
     --tag)
@@ -66,6 +67,9 @@ fi
 [[ -n "$URL" ]] || { usage >&2; exit 2; }
 
 command -v python3 >/dev/null || { echo 'ERROR: Missing python3' >&2; exit 1; }
+if (( ! EXPLICIT_OUTPUT )); then
+  LIBRARY_DIR="$(python3 -B "$SCRIPT_DIR/videx_config.py")" || exit 2
+fi
 
 # --id accepts exactly one bare ID or one distinct bracketed ID in text.
 # Reject ambiguous inputs rather than accidentally bookmarking another video.
@@ -101,7 +105,7 @@ if ((RE_INDEX)); then
 fi
 
 # --output specifies the library root, not the bookmarks directory.
-if [[ "$LIBRARY_DIR" != "$PROJECT_DIR" && "${LIBRARY_DIR%/}" == */bookmarks ]]; then
+if [[ "${LIBRARY_DIR%/}" == */bookmarks ]]; then
   echo 'ERROR: --output expects the library root, not its bookmarks/ directory.' >&2
   exit 2
 fi

@@ -9,6 +9,7 @@ import shutil
 import sys
 sys.dont_write_bytecode = True
 import os
+from videx_config import default_library
 
 from importlib.util import spec_from_file_location, module_from_spec
 
@@ -39,10 +40,14 @@ class ArchiveParser(HTMLParser):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('directory', nargs='?', default=str(Path(__file__).resolve().parent.parent / 'bookmarks'))
+    p.add_argument('directory', nargs='?', default=None)
     p.add_argument('--apply', action='store_true', help='Back up and replace pages; default is dry-run')
     args = p.parse_args()
-    root = Path(args.directory).expanduser().resolve()
+    try:
+        selected = Path(args.directory).expanduser().resolve() if args.directory else default_library()
+    except ValueError as exc:
+        p.error(str(exc))
+    root = selected / "bookmarks" if (selected / "bookmarks").is_dir() else selected
     if not root.is_dir():
         p.error(f'Not a directory: {root}')
     spec = spec_from_file_location('bookmark_generator', Path(__file__).with_name('yt-bookmark-generate.py'))

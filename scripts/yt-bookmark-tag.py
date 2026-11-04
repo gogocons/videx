@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 import tempfile
+from videx_config import default_library
 
 ID = re.compile(r'^[A-Za-z0-9_-]{11}$')
 FILENAME_ID = re.compile(r'\[([A-Za-z0-9_-]{11})\]\.html$', re.I)
@@ -116,7 +117,16 @@ def main():
     parser.add_argument('operation', choices=['add', 'remove', 'set', 'rename', 'list', 'report', 'prune'])
     parser.add_argument('values', nargs='*', help='For add/remove/set: VIDEO_ID TAG...; rename: OLD NEW; list: VIDEO_ID')
     parser.add_argument('--apply', action='store_true', help='Write changes; default is preview only')
-    args = parser.parse_args()
+    # Preserve legacy: LIBRARY OPERATION ..., while allowing OPERATION ...
+    # to target the configured default library.
+    operations = {'add', 'remove', 'set', 'rename', 'list', 'report', 'prune'}
+    argv = sys.argv[1:]
+    if argv and argv[0] in operations:
+        try:
+            argv.insert(0, str(default_library()))
+        except ValueError as exc:
+            parser.error(str(exc))
+    args = parser.parse_args(argv)
     root = args.library.expanduser().resolve()
     if not (root / 'bookmarks').is_dir(): parser.error(f'Not a library: missing {root / "bookmarks"}')
     path = root / 'catalog.json'

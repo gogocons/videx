@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sys
 from urllib.parse import quote
+from videx_config import default_library
 
 try:
     from PIL import Image, ImageOps
@@ -201,10 +202,18 @@ search.addEventListener('input',render);channel.addEventListener('change',render
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('directory', nargs='?', default=str(Path(__file__).resolve().parent.parent / 'bookmarks'), help='Bookmark root directory (default: project bookmarks/ directory)')
+    parser.add_argument(
+    'directory',
+    nargs='?',
+    default=None,
+    help='Bookmark library directory (default: configured library)'
+)
     parser.add_argument('--thumbnail-width', type=int, default=360, help='Embedded preview width in pixels (default: 360)')
     args = parser.parse_args()
-    selected = Path(args.directory).expanduser().resolve()
+    try:
+        selected = Path(args.directory).expanduser().resolve() if args.directory else default_library()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if not selected.is_dir():
         parser.error(f'Not a directory: {selected}')

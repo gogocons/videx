@@ -2,7 +2,8 @@
 /bookmarks/
 /index.html
 /.index.html.tmp
-catalog.json
+/catalog.json
+/catalog.json.bak-*
 
 # Migration backups and scratch output
 /*-backup-*/
@@ -17,6 +18,7 @@ __pycache__/
 __MACOSX/
 ._*
 
-# Local configuration and secrets (if introduced later)
+# Local configuration and secrets
+/config.local.json
 .env
 .env.*

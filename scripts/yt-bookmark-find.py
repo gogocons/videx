@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import sys
 from urllib.parse import parse_qs, unquote, urlsplit
+from videx_config import default_library
 
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 FILE_ID = re.compile(r"\[([A-Za-z0-9_-]{11})\]\.html$", re.I)
@@ -146,12 +147,16 @@ def audit_library(library):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("library", type=Path, help="Library root, not bookmarks/")
+    p.add_argument("library", type=Path, nargs="?", help="Library root (default: configured library)")
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--url")
     group.add_argument("--id")
     group.add_argument("--audit", action="store_true", help="Audit all bookmarks for duplicates and ID inconsistencies")
     args = p.parse_args()
+    try:
+        args.library = args.library.expanduser().resolve() if args.library else default_library()
+    except ValueError as exc:
+        p.error(str(exc))
     if args.audit:
         return audit_library(args.library.expanduser().resolve())
     video_id = extract_id(args.url) if args.url else args.id

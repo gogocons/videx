@@ -33,9 +33,9 @@ Each bookmark is a standalone HTML page containing the video's thumbnail, descri
 - **Optionally rebuild the index with `--re-index`** after saving, refreshing or skipping a bookmark; otherwise indexing remains manual.
 - **Audit a library for duplicates and ID inconsistencies** using the read-only `yt-bookmark-find.py --audit` command. The detector can recognize renamed bookmarks through their embedded metadata.
 - Upgrade previously saved bookmark pages **offline**, with a dry run and backups before applying changes.
-- Keep your library in the project-relative `bookmarks/` directory or specify another library root with `--output`.
+- Keep your library outside the source repository using `config.local.json`, or override the destination with `--output`. Without local configuration, the project-relative library remains the fallback.
 
-**Limitations:** Videx does not save video playback or transcripts. Original video links may become unavailable. Playlist importing, personal tags and collections are **planned, not yet implemented**. Capturing or refreshing a bookmark requires internet access; browsing, indexing, upgrading and auditing existing bookmarks work offline.
+**Limitations:** Videx does not save video playback or transcripts. Original video links may become unavailable. Playlist importing, index tag filtering and collections are **planned**; basic personal catalog tagging is implemented. Capturing or refreshing a bookmark requires internet access; browsing, indexing, upgrading and auditing existing bookmarks work offline.
 
 ## Requirements
 
@@ -59,7 +59,7 @@ bash scripts/yt-bookmark.sh --help
 bash scripts/yt-bookmark.sh --re-index 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
-Open the generated `index.html` in your browser. Bookmarks are created under `bookmarks/<channel>/<title> [video-id].html`. The `bookmarks/` folder is created automatically when saving the first video. No server is needed.
+Open the generated `index.html` in your browser. Bookmarks are created under `<library>/bookmarks/<channel>/<title> [video-id].html`. The `bookmarks/` folder is created automatically when saving the first video. No server is needed.
 
 Without `--re-index`, bookmark capture does **not** rebuild the index. You can rebuild it separately at any time:
 
@@ -126,6 +126,40 @@ python3 -B scripts/yt-bookmark-index.py
 
 The upgrade tool works entirely offline. Inspect its dry-run output before applying changes and retain backups until you verify the results. Index generation requires at least one valid bookmark.
 
+## Separate library configuration
+
+Videx source code and personal bookmark data can live in different folders. Copy `config.example.json` to `config.local.json` in the project root, then edit it:
+
+```json
+{
+  "library": "~/Documents/Video Bookmarks"
+}
+```
+
+`config.local.json` is ignored by Git. The `library` value must be an absolute path or begin with `~/`, and must point to the **library root**, not `bookmarks/`. When the file is absent, Videx falls back to its original project-local library. An invalid configuration fails with an error instead of silently selecting another location. Explicit paths still override the configured default.
+
+Commands with a configured default:
+
+```bash
+bash scripts/yt-bookmark.sh --re-index 'https://youtu.be/VIDEO_ID'
+python3 -B scripts/yt-bookmark-index.py
+python3 -B scripts/yt-bookmark-find.py --audit
+python3 -B scripts/yt-bookmark-tag.py report
+python3 -B scripts/yt-bookmark-upgrade.py
+```
+
+The tag tool also accepts its original `LIBRARY OPERATION ...` syntax; `yt-bookmark.sh --output DIR` and positional directory arguments on the other utilities continue to override the default. The generator and metadata helper accept explicit file arguments and need no configuration.
+
+### Moving an existing collection
+
+1. Back up your current library before moving anything. Quit any programs editing the files.
+2. Create a directory for your external library, such as `~/Documents/Video Bookmarks/`. Move **the entire `bookmarks/` directory**, `catalog.json`, any `catalog.json.bak-*` files, and `index.html` from the project root into it. Do not move scripts or Git files.
+3. Update `config.local.json` to point to your chosen library root.
+4. Verify `python3 -B scripts/yt-bookmark-find.py --audit`, then regenerate with `python3 -B scripts/yt-bookmark-index.py`. Open the new `index.html` and test an existing bookmark's Back to Library link.
+5. Only after verification, remove obsolete project-local generated index or bookmark copies. Keep your backup until you are satisfied. Do not keep two active libraries with the same bookmarks.
+
+**Important:** The `--output` flag on the capture script creates the target library directory if needed. Check the configured path carefully before your first capture. The offline index and audit commands will not create missing bookmark directories.
+
 ## Project layout
 
 ```text
@@ -137,15 +171,16 @@ videx/
 │   ├── yt-bookmark-metadata.py   # Curate stable metadata (schema v2)
 │   ├── yt-bookmark-index.py      # Generate searchable offline index
 │   └── yt-bookmark-upgrade.py    # Offline migration and backups
-├── bookmarks/                   # Personal library; Git-ignored
-└── index.html                   # Generated dashboard; Git-ignored
+├── config.example.json          # Sample library path (tracked)
+├── config.local.json            # Personal default library path (Git-ignored)
+└── .gitignore
 ```
 
 Individual bookmarks remain readable on their own. Their embedded thumbnail and curated metadata do not require a network connection; external links do. The back-to-library link assumes the bookmark remains in the indexed archive tree.
 
 ## Bookmark storage and backups
 
-Videx stores bookmarks locally as standalone HTML files in the `bookmarks/` directory. The generated `index.html` provides an offline-searchable interface to your collection.
+Videx stores bookmarks locally as standalone HTML files in the selected library’s `bookmarks/` directory. The generated `index.html` provides an offline-searchable interface to your collection.
 
 These files are excluded from Git tracking by default. Your bookmark collection is independent of the Videx source code, so be sure to back it up separately. Duplicate detection and auditing do not replace backups.
 
