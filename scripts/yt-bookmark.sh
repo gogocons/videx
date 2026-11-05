@@ -26,6 +26,8 @@ Options:
 
 An existing video ID is skipped by default, even if its title has changed.
 The index is not rebuilt unless --re-index is specified.
+Requested tags and the catalog are validated before capture. Tags on new
+bookmarks are applied automatically; existing-bookmark tags require --apply.
 EOF
 }
 
@@ -106,6 +108,34 @@ if [[ "${LIBRARY_DIR%/}" == */bookmarks ]]; then
   echo 'ERROR: --output expects the library root, not its bookmarks/ directory.' >&2
   exit 2
 fi
+
+# Keep tag argument/catalog errors ahead of any bookmark write. Leave untagged
+# capture independent of catalog validation unless indexing is requested.
+tag_preflight() {
+  if ((${#TAGS[@]})); then
+    python3 -B - "$LIBRARY_DIR" "$SCRIPT_DIR" "${TAGS[@]}" <<'PYTAGS'
+import sys
+from pathlib import Path
+from importlib.util import module_from_spec, spec_from_file_location
+sys.path.insert(0, sys.argv[2])
+
+def load_script(name):
+    spec = spec_from_file_location(name, Path(sys.argv[2]) / (name + '.py'))
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+try:
+    load_script('yt-bookmark-tag').unique(sys.argv[3:])
+    load_script('yt-bookmark-find').catalog_tags(Path(sys.argv[1]))
+except (OSError, ValueError) as exc:
+    print(f'ERROR: Capture tag preflight failed: {exc}', file=sys.stderr)
+    sys.exit(2)
+PYTAGS
+  fi
+}
+
+tag_preflight || exit 2
 mkdir -p "$LIBRARY_DIR"
 LIBRARY_DIR="$(cd -- "$LIBRARY_DIR" && pwd)"
 OUTPUT_DIR="$LIBRARY_DIR/bookmarks"
@@ -242,6 +272,7 @@ resolved_status=0
 resolved_existing="$(lookup --id "$video_id")" || resolved_status=$?
 if ((resolved_status == 2)); then exit 1; fi
 inventory_preflight || exit 1
+tag_preflight || exit 2
 if ((resolved_status == 0)); then
   if ((OVERWRITE)); then
     output="$resolved_existing"

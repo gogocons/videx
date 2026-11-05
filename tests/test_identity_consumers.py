@@ -283,16 +283,122 @@ if os.environ.get('VIDEX_FIXTURE_CONFLICT'):
 if os.environ.get('VIDEX_FIXTURE_DUPLICATES'):
     for name in ('duplicate-one.html', 'duplicate-two.html'):
         (root / 'library' / 'bookmarks' / name).write_text('<script id="youtube-metadata">{"id":"BBBBBBBBBBB"}</script>')
+if os.environ.get('VIDEX_FIXTURE_BAD_CATALOG'):
+    (root / 'library' / 'catalog.json').write_text('{broken')
 ''', encoding='utf-8')
         stub.chmod(0o700)
         self.environment = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
                                 TMPDIR=str(temporary), PYTHONDONTWRITEBYTECODE='1',
                                 VIDEX_FIXTURE_ROOT=str(self.root), VIDEX_FIXTURE_ID=json.dumps(A))
 
-    def capture(self, url=None, *extra):
-        return subprocess.run(['bash', str(SCRIPTS / 'yt-bookmark.sh'), '--output', str(self.library),
-                               '--tag', 'personal', *extra, url or 'https://youtu.be/' + A],
+    def capture(self, url=None, *extra, with_tags=True, bash=None):
+        command = [bash or os.environ.get('VIDEX_TEST_BASH', 'bash'), str(SCRIPTS / 'yt-bookmark.sh'),
+                   '--output', str(self.library)]
+        if with_tags:
+            command.extend(['--tag', 'personal'])
+        return subprocess.run([*command, *extra, url or 'https://youtu.be/' + A],
                               env=self.environment, cwd=self.root, text=True, capture_output=True, timeout=15)
+
+    def test_invalid_requested_tags_never_create_or_refresh_bookmarks(self):
+        existing = self.collection / 'renamed.html'
+        existing.write_text(document(A))
+        catalog = self.library / 'catalog.json'
+        catalog.write_text(json.dumps({'version': 1, 'bookmarks': {A: {'tags': ['keep']}}, 'collections': {}}))
+        for invalid in ('x' * 81, 'bad\x1btag', 'bad\x01tag'):
+            for url, extra in (('https://youtu.be/' + C, ()),
+                               ('https://youtu.be/' + A, ('--overwrite',)),
+                               ('https://youtu.be/' + A, ('--overwrite', '--apply'))):
+                with self.subTest(tag=invalid, url=url, extra=extra):
+                    before = {str(p): (p.read_bytes(), p.stat().st_mode) for p in self.library.rglob('*') if p.is_file()}
+                    self.environment['VIDEX_FIXTURE_ID'] = json.dumps(C if url.endswith(C) else A)
+                    result = self.capture(url, *extra, '--tag', invalid)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertFalse((self.root / 'extractor-called').exists())
+                    self.assertEqual({str(p): (p.read_bytes(), p.stat().st_mode)
+                                      for p in self.library.rglob('*') if p.is_file()}, before)
+                    self.assertNotIn('Traceback', result.stderr)
+
+    def test_tagged_capture_rejects_bad_catalog_before_new_capture_or_refresh(self):
+        existing = self.collection / 'renamed.html'
+        existing.write_text(document(A))
+        catalog = self.library / 'catalog.json'
+        for content in ('{broken', json.dumps({'version': 2, 'bookmarks': {}, 'collections': {}}),
+                        json.dumps({'version': 1, 'bookmarks': {A: {'tags': [1]}}, 'collections': {}})):
+            catalog.write_text(content)
+            for url, extra in (('https://youtu.be/' + C, ()),
+                               ('https://youtu.be/' + A, ('--overwrite', '--apply'))):
+                with self.subTest(content=content, url=url):
+                    before = {str(p): p.read_bytes() for p in self.library.rglob('*') if p.is_file()}
+                    result = self.capture(url, *extra)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertFalse((self.root / 'extractor-called').exists())
+                    self.assertEqual({str(p): p.read_bytes() for p in self.library.rglob('*') if p.is_file()}, before)
+                    self.assertNotIn('Traceback', result.stderr)
+
+    def test_tagged_capture_rechecks_catalog_after_extraction(self):
+        existing = self.collection / 'renamed.html'
+        existing.write_text(document(A))
+        original = existing.read_bytes()
+        self.environment['VIDEX_FIXTURE_BAD_CATALOG'] = '1'
+        for identity, extra in ((C, ()), (A, ('--overwrite', '--apply'))):
+            with self.subTest(identity=identity):
+                (self.library / 'catalog.json').write_text(json.dumps({
+                    'version': 1, 'bookmarks': {A: {'tags': ['keep']}}, 'collections': {}}))
+                self.environment['VIDEX_FIXTURE_ID'] = json.dumps(identity)
+                result = self.capture('https://youtu.be/' + identity, *extra)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(list(self.collection.rglob('*.html')), [existing])
+                self.assertEqual(existing.read_bytes(), original)
+                self.assertEqual((self.library / 'catalog.json').read_text(), '{broken')
+                self.assertEqual(list(self.library.glob('catalog.json.bak-*')), [])
+
+    def test_tagged_capture_refuses_catalog_symlink_before_writing(self):
+        existing = self.collection / 'renamed.html'
+        existing.write_text(document(A))
+        original = existing.read_bytes()
+        target = self.root / 'synthetic-catalog-target.json'
+        target.write_text(json.dumps({'version': 1, 'bookmarks': {}, 'collections': {}}))
+        target_bytes = target.read_bytes()
+        catalog = self.library / 'catalog.json'
+        catalog.symlink_to(target)
+        result = self.capture(None, '--overwrite', '--apply')
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertTrue(catalog.is_symlink())
+        self.assertEqual(target.read_bytes(), target_bytes)
+        self.assertEqual(existing.read_bytes(), original)
+        self.assertFalse((self.root / 'extractor-called').exists())
+
+    def test_valid_tags_keep_normalization_and_length_boundary(self):
+        result = self.capture(None, '--tag', '  Multi\n Word\t', '--tag', 'multi word', '--tag', 'é' * 80)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        catalog = json.loads((self.library / 'catalog.json').read_text())
+        self.assertEqual(catalog['bookmarks'][A]['tags'], ['personal', 'Multi Word', 'é' * 80])
+
+    def test_untagged_capture_skip_refresh_and_reindex_on_system_bash(self):
+        # Use the platform's actual /bin/bash, not an assumed modern substitute.
+        result = self.capture(None, '--re-index', with_tags=False, bash='/bin/bash')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        saved, = self.collection.rglob('*.html')
+        original = saved.read_bytes()
+        self.assertTrue((self.library / 'index.html').exists())
+        self.assertFalse((self.library / 'catalog.json').exists())
+        (self.root / 'extractor-called').unlink()
+        skipped = self.capture(with_tags=False, bash='/bin/bash')
+        self.assertEqual(skipped.returncode, 0, skipped.stderr)
+        self.assertFalse((self.root / 'extractor-called').exists())
+        self.assertEqual(saved.read_bytes(), original)
+        refreshed = self.capture(None, '--overwrite', '--re-index', with_tags=False, bash='/bin/bash')
+        self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
+        self.assertEqual(list(self.collection.rglob('*.html')), [saved])
+        self.assertFalse((self.library / 'catalog.json').exists())
+
+    def test_untagged_capture_does_not_start_validating_catalog(self):
+        catalog = self.library / 'catalog.json'
+        catalog.write_text('{broken')
+        result = self.capture(with_tags=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(list(self.collection.rglob('*.html'))), 1)
+        self.assertEqual(catalog.read_text(), '{broken')
 
     def test_skipped_renamed_bookmark_tags_metadata_id_without_extractor(self):
         path = self.collection / 'renamed.html'

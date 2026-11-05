@@ -40,7 +40,8 @@ class ArchiveParser(HTMLParser):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('directory', nargs='?', default=None)
+    p.add_argument('directory', nargs='?', default=None,
+                   help='Library root or bookmark directory (default: configured library)')
     p.add_argument('--apply', action='store_true', help='Back up and replace pages; default is dry-run')
     args = p.parse_args()
     try:

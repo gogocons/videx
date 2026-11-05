@@ -263,12 +263,13 @@ def load_catalog_tags(library_root):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__,
+        epilog='Personal catalog tags are included automatically. Invalid catalogs return status 2 and leave the existing index untouched.')
     parser.add_argument(
     'directory',
     nargs='?',
     default=None,
-    help='Bookmark library directory (default: configured library)'
+    help='Library root or its bookmarks/ directory (default: configured library)'
 )
     parser.add_argument('--thumbnail-width', type=int, default=360, help='Embedded preview width in pixels (default: 360)')
     args = parser.parse_args()
