@@ -4,6 +4,7 @@ import argparse
 import base64
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
 import os
@@ -123,6 +124,7 @@ input:focus,select:focus{border-color:#90a9e8}.count{color:#9ca5b5;font-size:.88
 .details{padding:11px 2px}.title{font-size:.98rem;line-height:1.42;font-weight:650;margin:0 0 7px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 a{color:inherit}.title a{text-decoration:none}.title a:hover{text-decoration:underline}.channel{color:#aab3c2;font-size:.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .meta{color:#818c9e;font-size:.78rem;margin-top:5px}.actions{display:flex;gap:15px;margin-top:10px;font-size:.79rem}.actions a{color:#a9c5ff;text-decoration:none}.actions a:hover{text-decoration:underline}
+.personal-tags{margin-top:8px}.personal-tags-label{display:block;font-size:.7rem;opacity:.7;margin-bottom:4px}.personal-tag-list{display:flex;flex-wrap:wrap;gap:4px}.personal-tag{max-width:100%;overflow-wrap:anywhere;font-size:.72rem;line-height:1.4;padding:2px 6px;border-radius:8px;color:inherit;background:rgba(127,127,127,.12);border:1px solid rgba(127,127,127,.35)}
 .empty{text-align:center;color:#aab3c2;padding:70px 10px}.footer{color:#778295;font-size:.8rem;margin-top:42px;text-align:center}
 @media(max-width:690px){main{padding:20px 14px 50px}.toolbar{grid-template-columns:1fr 1fr}.toolbar input{grid-column:1/-1}.grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:17px 12px}.title{font-size:.9rem}.stats{width:100%}}
 </style>
@@ -177,7 +179,14 @@ function date(x){if(!x)return '';const y=String(x);return `${y.slice(0,4)}-${y.s
 function node(tag,cls,txt){const el=document.createElement(tag);if(cls)el.className=cls;if(txt!==undefined)el.textContent=txt;return el}
 function link(label,href){const a=node('a','',label);a.href=href;return a}
 function makeCard(x){const card=node('article','card');const imageLink=link('',x.href);imageLink.className='thumb-link';imageLink.setAttribute('aria-label',`Open archived bookmark: ${x.title}`);if(x.thumbnail){const img=node('img');img.src=x.thumbnail;img.alt='';img.loading='lazy';imageLink.append(img)}else{imageLink.append(node('span','muted','No thumbnail'))}if(x.duration!=null)imageLink.append(node('span','duration',duration(x.duration)));card.append(imageLink);
-const details=node('div','details');const title=node('h2','title');title.append(link(x.title,x.href));details.append(title,node('div','channel',x.channel));const dateText=x.uploadDate?`Uploaded ${date(x.uploadDate)}`:'Upload date unavailable';details.append(node('div','meta',dateText));const actions=node('div','actions');actions.append(link('Open bookmark',x.href));if(/^https?:\/\//i.test(x.url)){const external=link('YouTube ↗',x.url);external.target='_blank';external.rel='noopener noreferrer';actions.append(external)}details.append(actions);card.append(details);return card}
+const details=node('div','details');const title=node('h2','title');title.append(link(x.title,x.href));details.append(title,node('div','channel',x.channel));const dateText=x.uploadDate?`Uploaded ${date(x.uploadDate)}`:'Upload date unavailable';details.append(node('div','meta',dateText));
+if(Array.isArray(x.personalTags)&&x.personalTags.length){
+const tags=node('div','personal-tags');tags.append(node('span','personal-tags-label','Personal tags'));
+const list=node('div','personal-tag-list');
+for(const tag of x.personalTags)list.append(node('span','personal-tag',tag));
+tags.append(list);details.append(tags);
+}
+const actions=node('div','actions');actions.append(link('Open bookmark',x.href));if(/^https?:\/\//i.test(x.url)){const external=link('YouTube ↗',x.url);external.target='_blank';external.rel='noopener noreferrer';actions.append(external)}details.append(actions);card.append(details);return card}
 function render() {
     const q = search.value.trim().toLocaleLowerCase();
     const c = channel.value;
@@ -244,6 +253,15 @@ def write_index_atomic(output, content):
         raise
 
 
+def load_catalog_tags(library_root):
+    """Reuse lookup's read-only catalog validation and normalization once per build."""
+    spec = spec_from_file_location('bookmark_find', Path(__file__).with_name('yt-bookmark-find.py'))
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _, tags = module.catalog_tags(library_root)
+    return tags
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -271,6 +289,11 @@ def main():
         root = selected / 'bookmarks' if (selected / 'bookmarks').is_dir() else selected
     if args.thumbnail_width < 64 or args.thumbnail_width > 1920:
         parser.error('--thumbnail-width must be between 64 and 1920')
+    try:
+        tags_by_id = load_catalog_tags(library_root)
+    except (OSError, ValueError) as exc:
+        print(f'ERROR: Cannot load personal tags; existing index left untouched: {exc}', file=sys.stderr)
+        return 2
     if Image is None:
         print('Note: Pillow not installed; original full-size thumbnails will be embedded. Install Pillow for smaller index files.', file=sys.stderr)
     paths = sorted(p for p in root.rglob('*.html') if p.is_file() and p.name.lower() != 'index.html')
@@ -279,7 +302,9 @@ def main():
     skipped = 0
     for path in paths:
         try:
-            items.append(parse_bookmark(path, root, args.thumbnail_width, library_root))
+            item = parse_bookmark(path, root, args.thumbnail_width, library_root)
+            item['personalTags'] = tags_by_id.get(item['id'], [])
+            items.append(item)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             skipped += 1
             print(f'  Skipping {path.relative_to(root)}: {exc}', file=sys.stderr)

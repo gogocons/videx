@@ -157,11 +157,17 @@ class ConsumerTests(unittest.TestCase):
 
     def test_index_skips_invalid_pages_but_indexes_renamed_valid_page(self):
         (self.collection / 'renamed.html').write_text(document(A), encoding='utf-8')
+        catalog = self.root / 'catalog.json'
+        catalog.write_text(json.dumps({'version': 1, 'bookmarks': {
+            A: {'tags': [' Renamed ', 'renamed', 'HIDDEN']},
+            B: {'tags': ['must not infer identity']},
+        }, 'collections': {}}))
         fixtures = {f'Conflict [{A}].html': document(B), f'Legacy [{C}].html': 'legacy',
                     'malformed.html': '<script id="youtube-metadata">{broken</script>',
                     'missing-id.html': '<script id="youtube-metadata">{}</script>'}
         for name, content in fixtures.items():
             (self.collection / name).write_text(content, encoding='utf-8')
+        before = {path: path.read_bytes() for path in [catalog, *self.collection.iterdir()]}
         with patch.object(indexer, 'Image', None):
             status, stdout, stderr = self.invoke(indexer, self.root)
         self.assertEqual(status, 0)
@@ -171,6 +177,13 @@ class ConsumerTests(unittest.TestCase):
         output = (self.root / 'index.html').read_text()
         self.assertIn('renamed.html', output)
         self.assertNotIn('Conflict%20', output)
+        payload = output.split('<script id="bookmark-data" type="application/json">', 1)[1].split('</script>', 1)[0]
+        items = json.loads(payload)['items']
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['id'], A)
+        self.assertEqual(items[0]['personalTags'], ['Renamed', 'hidden'])
+        self.assertNotIn('must not infer identity', output)
+        self.assertEqual({path: path.read_bytes() for path in before}, before)
 
     def test_upgrade_skips_bad_pages_and_preserves_dry_run_and_backups(self):
         valid = self.collection / 'renamed.html'

@@ -69,6 +69,8 @@ python3 -B scripts/yt-bookmark-index.py
 
 Index generation writes a unique temporary file beside `index.html`, then atomically replaces the index. Existing regular-file permissions are preserved; new indexes and replaced symlinks use normal creation permissions respecting the process umask, without writing through symlinks. Concurrent builds publish complete files; the last successful replacement wins.
 
+Rebuilding the index automatically embeds normalized personal tags from the selected library's `catalog.json` and displays them as wrapping badges on bookmark cards. Tags are display-only: search, channel filters, and sorting are unchanged, and `hidden` remains visible. Missing catalogs or tag records produce no tag row; orphan records are ignored. Malformed, unreadable, symlinked, or non-regular catalogs cause exit status `2` before index writing, even when no valid bookmarks exist, leaving any existing index and its permissions untouched. Bookmark files and catalog data are never rewritten. Existing indexes show tags only after rebuilding and remain self-contained offline.
+
 ### Bookmark management
 
 ```bash
