@@ -150,6 +150,8 @@ python3 -B scripts/yt-bookmark-upgrade.py
 
 The tag tool also accepts its original `LIBRARY OPERATION ...` syntax; `yt-bookmark.sh --output DIR` and positional directory arguments on the other utilities continue to override the default. The generator and metadata helper accept explicit file arguments and need no configuration.
 
+`python3 -B scripts/yt-bookmark-tag.py prune` previews catalog entries without matching bookmarks; add `--apply` to remove them, backing up the catalog first. Both modes refuse with status `2` if the `bookmarks/` inventory is incomplete: unreadable files or directories, malformed metadata, unidentified bookmarks, or symbolic links. Generated `index.html` files are excluded. Resolve the reported paths before retrying; refusal leaves the catalog and backups untouched.
+
 ### Moving an existing collection
 
 1. Back up your current library before moving anything. Quit any programs editing the files.

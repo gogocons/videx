@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import sys
 import tempfile
 from videx_config import default_library
@@ -47,7 +48,7 @@ def unique(tags):
     return list(out.values())
 
 
-def archive_ids(root):
+def archive_ids(root, strict=False):
     from html.parser import HTMLParser
     class Parser(HTMLParser):
         def __init__(self):
@@ -59,7 +60,37 @@ def archive_ids(root):
         def handle_data(self, data):
             if self.active: self.parts.append(data)
     ids = defaultdict(list)
-    for path in sorted((root / 'bookmarks').rglob('*.html')):
+    failures = []
+
+    def inspect_tree(directory):
+        # Unlike rglob, scandir exposes directory enumeration failures.
+        try:
+            with os.scandir(directory) as entries:
+                children = sorted(entries, key=lambda entry: entry.name)
+            for entry in children:
+                path = Path(entry.path)
+                if path.name.lower() == 'index.html':
+                    continue
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                    if stat.S_ISLNK(mode):
+                        raise ValueError('symbolic links cannot establish a complete local inventory')
+                    if stat.S_ISDIR(mode):
+                        yield from inspect_tree(path)
+                    elif path.suffix == '.html' and path.name.lower() != 'index.html':
+                        if not stat.S_ISREG(mode):
+                            raise ValueError('bookmark is not a regular file')
+                        yield path
+                except (OSError, ValueError) as exc:
+                    failures.append(f'{path}: {exc}')
+        except OSError as exc:
+            failures.append(f'{directory}: {exc}')
+
+    collection = root / 'bookmarks'
+    if strict and collection.is_symlink():
+        raise ValueError(f'Incomplete bookmark inventory: {collection} is a symbolic link; refusing to prune')
+    paths = inspect_tree(collection) if strict else sorted(collection.rglob('*.html'))
+    for path in paths:
         if path.name == 'index.html': continue
         try:
             parser = Parser(); parser.feed(path.read_text(encoding='utf-8'))
@@ -69,8 +100,12 @@ def archive_ids(root):
                 match = FILENAME_ID.search(path.name)
                 vid = match.group(1) if match else None
             if vid: ids[vid].append(path)
-        except (OSError, UnicodeError, ValueError, TypeError):
-            print(f'WARNING: Cannot inspect {path}', file=sys.stderr)
+            elif strict: failures.append(f'{path}: no valid video ID')
+        except (OSError, UnicodeError, ValueError, TypeError) as exc:
+            if strict: failures.append(f'{path}: {exc}')
+            else: print(f'WARNING: Cannot inspect {path}', file=sys.stderr)
+    if failures:
+        raise ValueError('Incomplete bookmark inventory; refusing to prune:\n  ' + '\n  '.join(failures))
     return ids
 
 
@@ -132,7 +167,7 @@ def main():
     path = root / 'catalog.json'
     try:
         catalog = load(path)
-        ids = archive_ids(root)
+        ids = archive_ids(root, strict=args.operation == 'prune')
         op, vals = args.operation, args.values
         if op == 'report':
             if vals: parser.error('report takes no additional arguments')
