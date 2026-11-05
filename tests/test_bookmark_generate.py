@@ -3,7 +3,9 @@ from html.parser import HTMLParser
 from importlib.util import module_from_spec, spec_from_file_location
 import json
 from pathlib import Path
+import sys
 import unittest
+from unittest.mock import patch
 
 
 spec = spec_from_file_location(
@@ -11,7 +13,8 @@ spec = spec_from_file_location(
     Path(__file__).resolve().parents[1] / 'scripts' / 'yt-bookmark-generate.py',
 )
 generator = module_from_spec(spec)
-spec.loader.exec_module(generator)
+with patch.object(sys, 'path', [str(Path(spec.origin).parent)] + sys.path):
+    spec.loader.exec_module(generator)
 
 
 class ScriptParser(HTMLParser):

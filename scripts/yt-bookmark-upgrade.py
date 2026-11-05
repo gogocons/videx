@@ -10,6 +10,7 @@ import sys
 sys.dont_write_bytecode = True
 import os
 from videx_config import default_library
+from videx_identity import resolve_identity
 
 from importlib.util import spec_from_file_location, module_from_spec
 
@@ -64,7 +65,11 @@ def main():
     for path in paths:
         try:
             parser = ArchiveParser()
-            parser.feed(path.read_text(encoding='utf-8'))
+            if path.is_symlink():
+                raise ValueError('symbolic-link bookmark cannot be upgraded safely')
+            source = path.read_text(encoding='utf-8')
+            video_id = resolve_identity(path.name, source)
+            parser.feed(source)
             if not parser.metadata or not parser.thumbnail:
                 raise ValueError('missing metadata or embedded thumbnail')
             metadata = json.loads(''.join(parser.metadata))
@@ -74,6 +79,8 @@ def main():
                 raise ValueError('missing video ID or title')
             relative_index = Path(os.path.relpath(root.parent / 'index.html', path.parent)).as_posix()
             document = module.make_document(metadata, parser.thumbnail, relative_index)
+            if resolve_identity(path.name, document) != video_id:
+                raise ValueError('rebuilt bookmark identity changed')
             # Validate before touching any source file.
             check = ArchiveParser()
             check.feed(document)

@@ -6,15 +6,12 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import stat
 import sys
 import tempfile
 from videx_config import default_library
-
-ID = re.compile(r'^[A-Za-z0-9_-]{11}$')
-FILENAME_ID = re.compile(r'\[([A-Za-z0-9_-]{11})\]\.html$', re.I)
+from videx_identity import VIDEO_ID as ID, IdentityError, bookmark_identity
 
 
 def empty():
@@ -49,16 +46,6 @@ def unique(tags):
 
 
 def archive_ids(root, strict=False):
-    from html.parser import HTMLParser
-    class Parser(HTMLParser):
-        def __init__(self):
-            super().__init__(); self.active = False; self.parts = []
-        def handle_starttag(self, tag, attrs):
-            if tag == 'script' and dict(attrs).get('id') == 'youtube-metadata': self.active = True
-        def handle_endtag(self, tag):
-            if tag == 'script': self.active = False
-        def handle_data(self, data):
-            if self.active: self.parts.append(data)
     ids = defaultdict(list)
     failures = []
 
@@ -88,24 +75,24 @@ def archive_ids(root, strict=False):
 
     collection = root / 'bookmarks'
     if strict and collection.is_symlink():
-        raise ValueError(f'Incomplete bookmark inventory: {collection} is a symbolic link; refusing to prune')
+        raise ValueError(f'Incomplete bookmark inventory: {collection} is a symbolic link; refusing catalog changes')
     paths = inspect_tree(collection) if strict else sorted(collection.rglob('*.html'))
     for path in paths:
         if path.name == 'index.html': continue
         try:
-            parser = Parser(); parser.feed(path.read_text(encoding='utf-8'))
-            meta = json.loads(''.join(parser.parts)) if parser.parts else {}
-            vid = meta.get('id') if isinstance(meta, dict) else None
-            if not isinstance(vid, str) or not ID.fullmatch(vid):
-                match = FILENAME_ID.search(path.name)
-                vid = match.group(1) if match else None
-            if vid: ids[vid].append(path)
-            elif strict: failures.append(f'{path}: no valid video ID')
+            vid = bookmark_identity(path)
+            ids[vid].append(path)
         except (OSError, UnicodeError, ValueError, TypeError) as exc:
+            if isinstance(exc, IdentityError) and exc.category == 'MISMATCH':
+                exc = ValueError(f'{exc}; filename ID={exc.filename_id}, metadata ID={exc.metadata_id}')
             if strict: failures.append(f'{path}: {exc}')
-            else: print(f'WARNING: Cannot inspect {path}', file=sys.stderr)
+            else: print(f'WARNING: Cannot inspect {path}: {exc}; inventory is incomplete', file=sys.stderr)
+    if strict:
+        for vid, paths in ids.items():
+            if len(paths) > 1:
+                failures.append(f'Duplicate video ID {vid}: ' + ', '.join(str(path) for path in paths))
     if failures:
-        raise ValueError('Incomplete bookmark inventory; refusing to prune:\n  ' + '\n  '.join(failures))
+        raise ValueError('Incomplete bookmark inventory; refusing catalog changes:\n  ' + '\n  '.join(failures))
     return ids
 
 
@@ -167,7 +154,7 @@ def main():
     path = root / 'catalog.json'
     try:
         catalog = load(path)
-        ids = archive_ids(root, strict=args.operation == 'prune')
+        ids = archive_ids(root, strict=args.operation not in ('list', 'report'))
         op, vals = args.operation, args.values
         if op == 'report':
             if vals: parser.error('report takes no additional arguments')

@@ -159,20 +159,20 @@ existing="$(lookup --url "$URL")" || lookup_status=$?
 if ((lookup_status == 2)); then exit 1; fi
 if ((lookup_status == 0 && !OVERWRITE)); then
   printf 'SKIPPED: Video already bookmarked: %s\n' "$existing"
-  # --url may be an alternate URL; use lookup by ID from the existing file
-  # when the URL is not a simple watch URL. The tagger can only accept IDs.
+  # Resolve the validated identity, including manually renamed bookmarks.
   if ((${#TAGS[@]})); then
-    known_id="$(python3 - "$existing" <<'PYKNOWN'
-import re, sys
+    known_id="$(python3 -B - "$existing" "$SCRIPT_DIR" <<'PYKNOWN'
+import sys
 from pathlib import Path
-m = re.search(r'\[([A-Za-z0-9_-]{11})\]\.html$', Path(sys.argv[1]).name)
-if m: print(m.group(1))
+sys.path.insert(0, sys.argv[2])
+from videx_identity import bookmark_identity
+try:
+    print(bookmark_identity(Path(sys.argv[1])))
+except (OSError, ValueError) as exc:
+    print(f'ERROR: Cannot resolve existing bookmark identity: {exc}', file=sys.stderr)
+    sys.exit(2)
 PYKNOWN
-)"
-    if [[ -z "$known_id" ]]; then
-      echo 'ERROR: Cannot determine ID from existing filename; use --id VIDEO_ID for tagging.' >&2
-      exit 2
-    fi
+)" || exit 2
     tag_existing "$known_id"
   fi
   reindex
@@ -194,16 +194,21 @@ thumbnail="$(find "$tmpdir" -type f ! -name '*.info.json' -print -quit)"
 [[ -n "$thumbnail" ]] || { echo 'ERROR: Missing thumbnail' >&2; exit 1; }
 
 # Use Python for cross-platform path safety, including slashes in titles and channel names.
-fields="$(python3 - "$info_json" <<'PY'
+fields="$(python3 -B - "$info_json" "$SCRIPT_DIR" <<'PY'
 import json, sys
+sys.path.insert(0, sys.argv[2])
+from videx_identity import valid_id
 m=json.load(open(sys.argv[1], encoding='utf-8'))
+if not isinstance(m, dict) or not valid_id(m.get('id')):
+    print('ERROR: Extractor returned an invalid video ID; refusing capture', file=sys.stderr)
+    sys.exit(2)
 def safe(x):
     x=str(x or 'Unknown').replace('/', '⧸').replace('\\', '⧹').replace('\0','')
     x=''.join(c for c in x if ord(c)>=32 and c not in ':*?"<>|')
     return x.strip(' .')[:180] or 'Unknown'
 print(safe(m.get('uploader') or m.get('channel') or 'Unknown Channel'))
 print(safe(m.get('title') or 'Unknown Title'))
-print(safe(m.get('id') or 'Unknown ID'))
+print(m['id'])
 PY
 )"
 channel="$(printf '%s\n' "$fields" | sed -n '1p')"

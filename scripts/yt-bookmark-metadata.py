@@ -4,6 +4,8 @@
 Only preserve fields with durable archival value. Streaming URLs, caption manifests,
 and format lists are intentionally omitted; they are not subtitle transcripts.
 """
+from videx_identity import valid_id
+
 SCHEMA_VERSION = 2
 FIELDS = (
     'id', 'title', 'fulltitle', 'alt_title', 'webpage_url', 'original_url',
@@ -20,6 +22,8 @@ def curate(metadata):
         raise ValueError('metadata must be a JSON object')
     if not metadata.get('id') or not metadata.get('title'):
         raise ValueError('metadata is missing video ID or title')
+    if not valid_id(metadata['id']):
+        raise ValueError('metadata ID must be an 11-character string containing only letters, digits, _ or -')
     result = {k: metadata[k] for k in FIELDS if k in metadata and metadata[k] is not None}
     result['bookmark_schema_version'] = SCHEMA_VERSION
     return result

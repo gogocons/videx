@@ -1,0 +1,281 @@
+"""Stage B identity regressions using only disposable synthetic collections."""
+from contextlib import redirect_stderr, redirect_stdout
+from importlib.util import module_from_spec, spec_from_file_location
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+
+PROJECT = Path(__file__).resolve().parents[1]
+SCRIPTS = PROJECT / 'scripts'
+A, B, C = 'AAAAAAAAAAA', 'BBBBBBBBBBB', 'CCCCCCCCCCC'
+IMAGE = 'data:image/png;base64,aW1hZ2U='
+
+
+def load(name):
+    spec = spec_from_file_location(name.replace('-', '_'), SCRIPTS / (name + '.py'))
+    module = module_from_spec(spec)
+    with patch.object(sys, 'path', [str(SCRIPTS)] + sys.path):
+        spec.loader.exec_module(module)
+    return module
+
+
+tagger = load('yt-bookmark-tag')
+generator = load('yt-bookmark-generate')
+metadata_tool = load('yt-bookmark-metadata')
+indexer = load('yt-bookmark-index')
+upgrader = load('yt-bookmark-upgrade')
+
+
+def document(identity=A):
+    return '<img src="' + IMAGE + '"><script id="youtube-metadata">' + json.dumps({
+        'id': identity, 'title': 'Synthetic title', 'uploader': 'Synthetic channel',
+    }) + '</script>'
+
+
+class ConsumerTests(unittest.TestCase):
+    def setUp(self):
+        fixture = tempfile.TemporaryDirectory(prefix='.consumer-test-', dir=PROJECT)
+        self.addCleanup(fixture.cleanup)
+        self.root = Path(fixture.name)
+        self.collection = self.root / 'bookmarks'
+        self.collection.mkdir()
+
+    def invoke(self, module, *arguments):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(sys, 'argv', ['tool', *map(str, arguments)]), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            try:
+                status = module.main()
+            except (ValueError, OSError) as exc:
+                return exc, stdout.getvalue(), stderr.getvalue()
+            except SystemExit as exc:
+                return exc.code, stdout.getvalue(), stderr.getvalue()
+        return status, stdout.getvalue(), stderr.getvalue()
+
+    def test_metadata_curation_rejects_invalid_raw_ids(self):
+        for identity in (None, 123, True, [], '', 'short', A + '.', A + '\n'):
+            with self.subTest(identity=identity), self.assertRaises(ValueError):
+                metadata_tool.curate({'id': identity, 'title': 'Title'})
+        self.assertEqual(metadata_tool.curate({'id': A.lower(), 'title': 'Title'})['id'], A.lower())
+
+    def test_catalog_mutations_refuse_conflicts_malformed_unknown_and_duplicates(self):
+        bad = self.collection / f'Bad [{A}].html'
+        catalog = self.root / 'catalog.json'
+        original = json.dumps({'version': 1, 'bookmarks': {A: {'tags': ['keep']}}, 'collections': {}})
+        catalog.write_text(original, encoding='utf-8')
+        operations = [('add', A, 'new'), ('remove', A, 'keep'), ('set', A, 'new'),
+                      ('rename', 'keep', 'new'), ('prune',)]
+        for content in (document(B), '<script id="youtube-metadata">{broken</script>',
+                        '<script id="youtube-metadata"></script>',
+                        '<script id="youtube-metadata">{}</script>'):
+            bad.write_text(content, encoding='utf-8')
+            for operation in operations:
+                for apply in ([], ['--apply']):
+                    with self.subTest(content=content, operation=operation, apply=apply):
+                        status, _, stderr = self.invoke(tagger, self.root, *operation, *apply)
+                        self.assertEqual(status, 2)
+                        self.assertIn('Incomplete bookmark inventory', stderr)
+                        self.assertEqual(catalog.read_text(), original)
+                        self.assertEqual(list(self.root.glob('catalog.json.bak-*')), [])
+        bad.write_text(document(A), encoding='utf-8')
+        (self.collection / 'duplicate.html').write_text(document(A), encoding='utf-8')
+        self.assertEqual(self.invoke(tagger, self.root, 'add', A, 'new', '--apply')[0], 2)
+        self.assertEqual(catalog.read_text(), original)
+
+    def test_catalog_mutations_refuse_unidentified_files_and_traversal_failures(self):
+        unknown = self.collection / 'unidentified.html'
+        unknown.write_text('<html>no identity</html>', encoding='utf-8')
+        for operation in (('add', A, 'tag'), ('remove', A, 'tag'), ('set', A, 'tag'),
+                          ('rename', 'old', 'new'), ('prune',)):
+            with self.subTest(operation=operation):
+                self.assertEqual(self.invoke(tagger, self.root, *operation, '--apply')[0], 2)
+                with patch.object(tagger.os, 'scandir', side_effect=PermissionError('synthetic traversal denied')):
+                    status, _, stderr = self.invoke(tagger, self.root, *operation, '--apply')
+                    self.assertEqual(status, 2)
+                    self.assertIn('synthetic traversal denied', stderr)
+        self.assertFalse((self.root / 'catalog.json').exists())
+        self.assertEqual(list(self.root.glob('catalog.json.bak-*')), [])
+
+    def test_tagging_legacy_and_renamed_bookmarks_preserves_preview_and_backups(self):
+        (self.collection / f'Legacy [{A}].html').write_text('legacy', encoding='utf-8')
+        (self.collection / 'renamed.html').write_text(document(B), encoding='utf-8')
+        catalog = self.root / 'catalog.json'
+        for identity in (A, B):
+            self.assertEqual(self.invoke(tagger, self.root, 'add', identity, 'tag')[0], 0)
+            self.assertEqual(self.invoke(tagger, self.root, 'add', identity, 'tag', '--apply')[0], 0)
+        before = catalog.read_bytes()
+        self.assertEqual(self.invoke(tagger, self.root, 'add', B, 'another', '--apply')[0], 0)
+        backups = list(self.root.glob('catalog.json.bak-*'))
+        self.assertTrue(any(path.read_bytes() == before for path in backups))
+        self.assertEqual(json.loads(catalog.read_text())['bookmarks'][A]['tags'], ['tag'])
+
+    def test_generator_refuses_filename_conflict_and_unsafe_existing_identity(self):
+        info, thumbnail = self.root / 'info.json', self.root / 'thumb.png'
+        info.write_text(json.dumps({'id': B, 'title': 'Title'}), encoding='utf-8')
+        thumbnail.write_bytes(b'image')
+        output = self.collection / f'Video [{A}].html'
+        status, _, _ = self.invoke(generator, info, thumbnail, output)
+        self.assertIsInstance(status, ValueError)
+        self.assertFalse(output.exists())
+        output = self.collection / 'renamed.html'
+        for old in (document(A), '<script id="youtube-metadata">{broken</script>', 'unidentified'):
+            output.write_text(old, encoding='utf-8')
+            status, _, _ = self.invoke(generator, info, thumbnail, output)
+            self.assertNotIn(status, (None, 0))
+            self.assertEqual(output.read_text(), old)
+        output.write_text(document(B), encoding='utf-8')
+        self.assertIsNone(self.invoke(generator, info, thumbnail, output)[0])
+
+    def test_generator_refuses_symlink_without_following_target(self):
+        info, thumbnail = self.root / 'info.json', self.root / 'thumb.png'
+        info.write_text(json.dumps({'id': A, 'title': 'Title'}), encoding='utf-8')
+        thumbnail.write_bytes(b'image')
+        target = self.root / 'sentinel'
+        target.write_text('keep', encoding='utf-8')
+        output = self.collection / 'linked.html'
+        output.symlink_to(target)
+        self.assertEqual(self.invoke(generator, info, thumbnail, output)[0], 2)
+        self.assertTrue(output.is_symlink())
+        self.assertEqual(target.read_text(), 'keep')
+
+    def test_generator_accepts_legacy_refresh_with_matching_id(self):
+        info, thumbnail = self.root / 'info.json', self.root / 'thumb.png'
+        info.write_text(json.dumps({'id': A, 'title': 'Title'}), encoding='utf-8')
+        thumbnail.write_bytes(b'image')
+        output = self.collection / f'Legacy [{A}].html'
+        output.write_text('legacy', encoding='utf-8')
+        self.assertIsNone(self.invoke(generator, info, thumbnail, output)[0])
+        self.assertIn('youtube-metadata', output.read_text())
+
+    def test_index_skips_invalid_pages_but_indexes_renamed_valid_page(self):
+        (self.collection / 'renamed.html').write_text(document(A), encoding='utf-8')
+        fixtures = {f'Conflict [{A}].html': document(B), f'Legacy [{C}].html': 'legacy',
+                    'malformed.html': '<script id="youtube-metadata">{broken</script>',
+                    'missing-id.html': '<script id="youtube-metadata">{}</script>'}
+        for name, content in fixtures.items():
+            (self.collection / name).write_text(content, encoding='utf-8')
+        with patch.object(indexer, 'Image', None):
+            status, stdout, stderr = self.invoke(indexer, self.root)
+        self.assertEqual(status, 0)
+        self.assertIn('Indexed 1 bookmarks (4 skipped)', stdout)
+        for name in fixtures:
+            self.assertIn(name, stderr)
+        output = (self.root / 'index.html').read_text()
+        self.assertIn('renamed.html', output)
+        self.assertNotIn('Conflict%20', output)
+
+    def test_upgrade_skips_bad_pages_and_preserves_dry_run_and_backups(self):
+        valid = self.collection / 'renamed.html'
+        valid.write_text(document(A), encoding='utf-8')
+        invalid = {f'Conflict [{A}].html': document(B), f'Legacy [{C}].html': 'legacy',
+                   'malformed.html': '<script id="youtube-metadata">{broken</script>'}
+        for name, content in invalid.items():
+            (self.collection / name).write_text(content, encoding='utf-8')
+        original = valid.read_bytes()
+        self.assertEqual(self.invoke(upgrader, self.root)[0], 0)
+        self.assertEqual(valid.read_bytes(), original)
+        self.assertEqual(list(self.root.glob('bookmarks-backup-*')), [])
+        status, _, stderr = self.invoke(upgrader, self.root, '--apply')
+        self.assertEqual(status, 0)
+        for name, content in invalid.items():
+            self.assertIn(name, stderr)
+            self.assertEqual((self.collection / name).read_text(), content)
+        backup, = self.root.glob('bookmarks-backup-*')
+        self.assertEqual((backup / 'renamed.html').read_bytes(), original)
+        self.assertEqual([path.name for path in backup.iterdir()], ['renamed.html'])
+        self.assertNotEqual(valid.read_bytes(), original)
+
+
+class CaptureTests(unittest.TestCase):
+    def setUp(self):
+        fixture = tempfile.TemporaryDirectory(prefix='.capture-test-', dir=PROJECT)
+        self.addCleanup(fixture.cleanup)
+        self.root = Path(fixture.name)
+        self.library = self.root / 'library'
+        self.collection = self.library / 'bookmarks'
+        self.collection.mkdir(parents=True)
+        bin_dir = self.root / 'bin'
+        bin_dir.mkdir()
+        temporary = self.root / 'tmp'
+        temporary.mkdir()
+        stub = bin_dir / 'yt-dlp'
+        stub.write_text('#!' + sys.executable + '\n' + '''import json, os, pathlib, sys
+root = pathlib.Path(os.environ['VIDEX_FIXTURE_ROOT'])
+(root / 'extractor-called').write_text('yes')
+out = pathlib.Path(sys.argv[sys.argv.index('--paths') + 1])
+identity = json.loads(os.environ['VIDEX_FIXTURE_ID'])
+(out / 'fixture.info.json').write_text(json.dumps({'id': identity, 'title': 'Synthetic title', 'uploader': 'Synthetic channel'}))
+(out / 'fixture.png').write_bytes(b'image')
+if os.environ.get('VIDEX_FIXTURE_CONFLICT'):
+    (root / 'library' / 'bookmarks' / 'Conflict [AAAAAAAAAAA].html').write_text('<script id="youtube-metadata">{"id":"BBBBBBBBBBB"}</script>')
+''', encoding='utf-8')
+        stub.chmod(0o700)
+        self.environment = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
+                                TMPDIR=str(temporary), PYTHONDONTWRITEBYTECODE='1',
+                                VIDEX_FIXTURE_ROOT=str(self.root), VIDEX_FIXTURE_ID=json.dumps(A))
+
+    def capture(self, url=None, *extra):
+        return subprocess.run(['bash', str(SCRIPTS / 'yt-bookmark.sh'), '--output', str(self.library),
+                               '--tag', 'personal', *extra, url or 'https://youtu.be/' + A],
+                              env=self.environment, cwd=self.root, text=True, capture_output=True, timeout=15)
+
+    def test_skipped_renamed_bookmark_tags_metadata_id_without_extractor(self):
+        path = self.collection / 'renamed.html'
+        path.write_text(document(A), encoding='utf-8')
+        original = path.read_bytes()
+        preview = self.capture()
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertFalse((self.library / 'catalog.json').exists())
+        result = self.capture(None, '--apply')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / 'extractor-called').exists())
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(json.loads((self.library / 'catalog.json').read_text())['bookmarks'][A]['tags'], ['personal'])
+
+    def test_initial_conflict_stops_before_extractor_and_overwrite(self):
+        path = self.collection / f'Conflict [{A}].html'
+        path.write_text(document(B), encoding='utf-8')
+        before = path.read_bytes()
+        result = self.capture(None, '--overwrite')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertFalse((self.root / 'extractor-called').exists())
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_authoritative_id_checkpoint_refuses_new_conflict(self):
+        self.environment['VIDEX_FIXTURE_CONFLICT'] = '1'
+        result = self.capture('https://example.invalid/needs-resolution', '--overwrite')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertTrue((self.root / 'extractor-called').exists())
+        self.assertIn('MISMATCH', result.stderr)
+        self.assertEqual(len(list(self.collection.rglob('*.html'))), 1)
+        self.assertFalse((self.library / 'catalog.json').exists())
+
+    def test_raw_extractor_id_is_rejected_without_sanitizing(self):
+        for identity in (A + '.', A + '\n', 123, None):
+            with self.subTest(identity=identity):
+                self.environment['VIDEX_FIXTURE_ID'] = json.dumps(identity)
+                result = self.capture()
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('Extractor returned an invalid video ID', result.stderr)
+                self.assertEqual(list(self.collection.rglob('*.html')), [])
+                self.assertFalse((self.library / 'catalog.json').exists())
+
+    def test_valid_capture_and_refresh_preserve_id_and_original_path(self):
+        result = self.capture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        saved, = self.collection.rglob('*.html')
+        self.assertIn('[' + A + ']', saved.name)
+        refreshed = self.capture(None, '--overwrite', '--apply')
+        self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
+        self.assertEqual(list(self.collection.rglob('*.html')), [saved])
+
+
+if __name__ == '__main__':
+    unittest.main()

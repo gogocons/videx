@@ -13,6 +13,7 @@ import sys
 sys.dont_write_bytecode = True
 from importlib.util import spec_from_file_location, module_from_spec
 from urllib.parse import quote, urlsplit
+from videx_identity import bookmark_identity, resolve_identity
 
 
 def load_curator():
@@ -167,7 +168,14 @@ def main():
     metadata = json.loads(args.info_json.read_text(encoding='utf-8'))
     mime = mimetypes.guess_type(args.thumbnail.name)[0] or 'application/octet-stream'
     image_uri = f'data:{mime};base64,' + base64.b64encode(args.thumbnail.read_bytes()).decode('ascii')
-    write_atomic(args.output, make_document(metadata, image_uri, args.back_link))
+    document = make_document(metadata, image_uri, args.back_link)
+    video_id = resolve_identity(args.output.name, document)
+    if args.output.exists() or args.output.is_symlink():
+        if args.output.is_symlink():
+            p.error('Refusing to replace a symbolic-link bookmark')
+        if bookmark_identity(args.output) != video_id:
+            p.error('Existing bookmark identity differs from incoming metadata; refusing to replace')
+    write_atomic(args.output, document)
     print(f'Generated: {args.output}')
 
 
