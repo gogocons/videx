@@ -67,6 +67,8 @@ Without `--re-index`, bookmark capture does **not** rebuild the index. You can r
 python3 -B scripts/yt-bookmark-index.py
 ```
 
+Index generation writes a unique temporary file beside `index.html`, then atomically replaces the index. Existing regular-file permissions are preserved; new indexes and replaced symlinks use normal creation permissions respecting the process umask, without writing through symlinks. Concurrent builds publish complete files; the last successful replacement wins.
+
 ### Bookmark management
 
 ```bash

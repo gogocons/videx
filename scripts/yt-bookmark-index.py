@@ -6,8 +6,11 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 import io
 import json
+import os
 from pathlib import Path
 import re
+import secrets
+import stat
 import sys
 from urllib.parse import quote
 from videx_config import default_library
@@ -200,6 +203,45 @@ search.addEventListener('input',render);channel.addEventListener('change',render
 </script></body></html>'''
 
 
+def write_index_atomic(output, content):
+    """Publish a complete index using an exclusively created sibling file."""
+    output = Path(output)
+    try:
+        previous = output.lstat()
+    except FileNotFoundError:
+        mode = None
+    else:
+        mode = stat.S_IMODE(previous.st_mode) if stat.S_ISREG(previous.st_mode) else None
+    temp = None
+    try:
+        for _ in range(100):
+            candidate = output.parent / f'.index-{secrets.token_hex(16)}.tmp'
+            try:
+                # Exclusive creation uses 0666 filtered by umask, without changing it.
+                stream = candidate.open('x', encoding='utf-8')
+            except FileExistsError:
+                continue
+            temp = candidate
+            break
+        else:
+            raise FileExistsError('Cannot create a unique index temporary file')
+        with stream:
+            stream.write(content)
+            stream.flush()
+            if mode is not None:
+                os.fchmod(stream.fileno(), mode)
+        os.replace(temp, output)
+    except BaseException:
+        if temp is not None:
+            try:
+                temp.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                print(f'WARNING: Cannot remove temporary index {temp}: {exc}', file=sys.stderr)
+        raise
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -247,13 +289,7 @@ def main():
     payload = payload.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
     html = HTML_TEMPLATE.replace('__BOOKMARK_DATA__', payload)
     output = library_root / 'index.html'
-    temp = library_root / '.index.html.tmp'
-    try:
-        temp.write_text(html, encoding='utf-8')
-        temp.replace(output)
-    finally:
-        if temp.exists():
-            temp.unlink()
+    write_index_atomic(output, html)
     print(f'Indexed {len(items)} bookmarks ({skipped} skipped).')
     print(f'Wrote {output} ({output.stat().st_size / 1024 / 1024:.2f} MiB)')
     return 0
