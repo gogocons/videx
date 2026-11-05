@@ -2,6 +2,8 @@
 """Locate existing Videx bookmarks by video ID, without network access."""
 import argparse
 from collections import defaultdict
+from importlib.util import module_from_spec, spec_from_file_location
+import json
 import os
 from pathlib import Path
 import stat
@@ -87,9 +89,9 @@ def describe_issue(path, issue):
 
 
 
-def audit_library(library):
+def audit_library(library, snapshot=None):
     root = library / "bookmarks"
-    files, identities, issues, available = inventory(root)
+    files, identities, issues, available = inventory(root) if snapshot is None else snapshot
     if not available:
         for path, issue in issues:
             print(f'ERROR: {describe_issue(path, issue)}', file=sys.stderr)
@@ -116,6 +118,108 @@ def audit_library(library):
     print(f"Unreadable files: {sum(issue.category == 'UNREADABLE' for _, issue in issues)}")
     return 1 if duplicate_groups or issues else 0
 
+
+def catalog_tags(library):
+    """Read personal tags only when requested; never follow a catalog symlink."""
+    path = library / 'catalog.json'
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return 'missing', {}
+    if not stat.S_ISREG(mode):
+        raise ValueError(f'{path}: catalog must be a regular file, not a symlink or special file')
+    spec = spec_from_file_location('bookmark_tags', Path(__file__).with_name('yt-bookmark-tag.py'))
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    catalog = module.load(path)
+    tags = {}
+    for video_id, record in catalog['bookmarks'].items():
+        values = record.get('tags', [])
+        if any(not isinstance(value, str) for value in values):
+            raise ValueError(f'{path}: tags for {video_id} must contain only strings')
+        tags[video_id] = module.unique(values)
+    return 'present', tags
+
+
+def tag_report(library, args):
+    """Opt-in rendering; default lookup/audit output stays on its original path."""
+    report = {'report_version': 1, 'operation': 'audit' if args.audit else 'lookup',
+              'library': str(library), 'catalog': {'status': 'not_read'},
+              'bookmarks': [], 'issues': []}
+    snapshot = None
+    status = 0
+    groups = defaultdict(list)
+    if not args.audit:
+        video_id = extract_id(args.url) if args.url else args.id
+        if not video_id or not VIDEO_ID.fullmatch(video_id):
+            status = 3 if args.url else 2
+            report['issues'].append({'category': 'UNRESOLVED_URL' if args.url else 'INVALID_ID',
+                                     'message': 'URL requires extractor resolution' if args.url else 'Invalid video ID'})
+    if status == 0:
+        snapshot = inventory(library / 'bookmarks')
+        files, identities, issues, available = snapshot
+        for path, issue in issues:
+            item = {'category': issue.category, 'path': str(path), 'message': describe_issue(path, issue)}
+            if issue.category == 'MISMATCH':
+                item.update(filename_id=issue.filename_id, metadata_id=issue.metadata_id)
+            report['issues'].append(item)
+        for path, identity in identities.items():
+            if args.audit or identity == video_id:
+                groups[identity].append(path)
+        for identity, paths in sorted(groups.items()):
+            if len(paths) > 1:
+                report['issues'].append({'category': 'DUPLICATE', 'id': identity,
+                                         'paths': sorted(map(str, paths)),
+                                         'message': f'Multiple bookmarks have video ID {identity}'})
+        if args.audit:
+            report['summary'] = {
+                'scanned': len(files), 'unique_video_ids': len(groups),
+                'duplicate_groups': sum(len(paths) > 1 for paths in groups.values()),
+                'extra_copies': sum(len(paths) - 1 for paths in groups.values()),
+                'mismatches': sum(issue.category == 'MISMATCH' for _, issue in issues),
+                'unknown_ids': sum(issue.category == 'UNKNOWN' for _, issue in issues),
+                'unreadable_files': sum(issue.category == 'UNREADABLE' for _, issue in issues),
+            }
+            status = 2 if not available else 1 if report['issues'] else 0
+        else:
+            status = 2 if report['issues'] else 0 if groups else 1
+        if args.audit or status == 0:
+            report['bookmarks'] = [{'id': identity, 'paths': sorted(map(str, paths)), 'tags': None}
+                                   for identity, paths in sorted(groups.items())]
+        if (args.audit and available) or (not args.audit and status == 0):
+            try:
+                catalog_status, tags = catalog_tags(library)
+                report['catalog']['status'] = catalog_status
+                for item in report['bookmarks']:
+                    item['tags'] = tags.get(item['id'], [])
+            except (OSError, ValueError) as exc:
+                status = 2
+                report['catalog']['status'] = 'unavailable'
+                report['issues'].append({'category': 'CATALOG_ERROR', 'path': str(library / 'catalog.json'),
+                                         'message': f'Cannot report personal tags: {exc}'})
+    report['exit_status'] = status
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False))
+    else:
+        if args.audit:
+            audit_library(library, snapshot)
+            if report['catalog']['status'] != 'not_read':
+                print(f"\nPersonal catalog tags ({report['catalog']['status']}):")
+        for issue in report['issues']:
+            if issue['category'] == 'CATALOG_ERROR' or (not args.audit and status == 2):
+                print(f"ERROR: {issue['message']}", file=sys.stderr)
+                for path in issue.get('paths', []):
+                    print(f'  {path}', file=sys.stderr)
+        if args.audit or status == 0:
+            for item in report['bookmarks']:
+                for path in item['paths']:
+                    print(f'Bookmark: {path}')
+                print(f"Video ID: {item['id']}")
+                tags = 'unavailable' if item['tags'] is None else json.dumps(item['tags'], ensure_ascii=False)
+                print(f'Tags: {tags}')
+    return status
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("library", type=Path, nargs="?", help="Library root (default: configured library)")
@@ -123,11 +227,22 @@ def main():
     group.add_argument("--url")
     group.add_argument("--id")
     group.add_argument("--audit", action="store_true", help="Audit all bookmarks for duplicates and ID inconsistencies")
+    p.add_argument('--show-tags', action='store_true', help='Report personal tags from the selected library catalog')
+    p.add_argument('--json', action='store_true', help='Emit one JSON report (requires --show-tags)')
     args = p.parse_args()
+    if args.json and not args.show_tags:
+        p.error('--json requires --show-tags')
     try:
         args.library = args.library.expanduser().resolve() if args.library else default_library()
     except ValueError as exc:
+        if args.show_tags and args.json:
+            print(json.dumps({'report_version': 1, 'operation': 'audit' if args.audit else 'lookup',
+                              'library': None, 'catalog': {'status': 'not_read'}, 'bookmarks': [],
+                              'issues': [{'category': 'CONFIG_ERROR', 'message': str(exc)}], 'exit_status': 2}))
+            return 2
         p.error(str(exc))
+    if args.show_tags:
+        return tag_report(args.library, args)
     if args.audit:
         return audit_library(args.library.expanduser().resolve())
     video_id = extract_id(args.url) if args.url else args.id

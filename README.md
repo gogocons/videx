@@ -117,6 +117,22 @@ The audit scans the selected library's `bookmarks/` tree and reports:
 
 It summarizes scanned files, unique video IDs, duplicate groups, extra copies and other findings. A clean audit exits with status `0`; detected issues return `1`; invalid arguments or a missing bookmarks directory return `2`. **The audit is read-only**: it does not rename, delete or repair files.
 
+### Personal tags in lookup and audit reports
+
+Add `--show-tags` to include personal tags from the selected library's `catalog.json`. Without this flag, lookup still prints only the matching path and never reads the catalog. The existing `yt-bookmark-tag.py report` command remains available.
+
+```bash
+python3 -B scripts/yt-bookmark-find.py '/path/to/library' --id AAAAAAAAAAA --show-tags
+python3 -B scripts/yt-bookmark-find.py '/path/to/library' --audit --show-tags
+python3 -B scripts/yt-bookmark-find.py '/path/to/library' --audit --show-tags --json
+```
+
+Human lookup reports show `Bookmark:`, `Video ID:`, and `Tags: ["Python", "Research"]`. Human audit reports retain identity findings and append personal tags, grouping duplicate paths under their resolved ID. Conflicting identities are never assigned tags, and `hidden` does not filter results.
+
+`--json` requires `--show-tags` and emits one JSON document with `report_version: 1`, `operation`, `library`, `catalog.status`, `bookmarks` (`id`, absolute `paths`, `tags`), `issues`, and `exit_status`. Audit JSON also includes `summary` counts. Catalog status is `present`, `missing`, `unavailable`, or `not_read`. Missing catalogs/records yield empty tag lists and are never created. Tag whitespace, case-insensitive deduplication, and `hidden` normalization match the tag utility; catalog contents are not changed.
+
+Malformed, unreadable, symlinked, or non-regular catalogs produce status `2`. JSON retains any audit findings, includes a `CATALOG_ERROR` issue, and represents unavailable tags as `null`, not `[]`; human reports explain the error on stderr. Lookup failures (`1` not found, `2` unsafe/invalid, `3` URL needs extraction) do not read the catalog. Default lookup/audit behavior and exit codes remain unchanged. Argument syntax errors still use normal argparse diagnostics.
+
 ### Offline bookmark upgrades
 
 ```bash
