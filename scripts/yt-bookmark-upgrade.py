@@ -3,14 +3,13 @@
 import argparse
 from datetime import datetime
 from html.parser import HTMLParser
-import json
 from pathlib import Path
 import shutil
 import sys
 sys.dont_write_bytecode = True
 import os
 from videx_config import default_library
-from videx_identity import resolve_identity
+from videx_identity import loads_metadata, resolve_identity
 
 from importlib.util import spec_from_file_location, module_from_spec
 
@@ -72,7 +71,7 @@ def main():
             parser.feed(source)
             if not parser.metadata or not parser.thumbnail:
                 raise ValueError('missing metadata or embedded thumbnail')
-            metadata = json.loads(''.join(parser.metadata))
+            metadata = loads_metadata(''.join(parser.metadata))
             if not isinstance(metadata, dict):
                 raise ValueError('invalid metadata')
             if not metadata.get('id') or not metadata.get('title'):
@@ -84,7 +83,7 @@ def main():
             # Validate before touching any source file.
             check = ArchiveParser()
             check.feed(document)
-            rebuilt = json.loads(''.join(check.metadata))
+            rebuilt = loads_metadata(''.join(check.metadata))
             if rebuilt.get('id') != metadata['id'] or rebuilt.get('title') != metadata['title'] or check.thumbnail != parser.thumbnail:
                 raise ValueError('rebuilt bookmark validation failed')
             if document == path.read_text(encoding='utf-8'):

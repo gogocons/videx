@@ -31,6 +31,7 @@ generator = load('yt-bookmark-generate')
 metadata_tool = load('yt-bookmark-metadata')
 indexer = load('yt-bookmark-index')
 upgrader = load('yt-bookmark-upgrade')
+finder = load('yt-bookmark-find')
 
 
 def document(identity=A):
@@ -193,6 +194,55 @@ class ConsumerTests(unittest.TestCase):
         self.assertNotEqual(valid.read_bytes(), original)
 
 
+    def test_generation_rejects_repeated_id_keys_without_writing(self):
+        info, thumbnail = self.root / 'info.json', self.root / 'thumb.png'
+        thumbnail.write_bytes(b'image')
+        output = self.collection / 'renamed.html'
+        for second in (A, B):
+            info.write_text('{"id":"' + A + '","id":"' + second + '","title":"Title"}')
+            for existing in (False, True):
+                with self.subTest(second=second, existing=existing):
+                    if existing:
+                        output.write_text(document(second))
+                    before = {str(p): p.read_bytes() for p in self.collection.rglob('*') if p.is_file()}
+                    status, _, _ = self.invoke(generator, info, thumbnail, output)
+                    self.assertIsInstance(status, ValueError)
+                    self.assertIn("repeated 'id'", str(status))
+                    self.assertEqual({str(p): p.read_bytes() for p in self.collection.rglob('*') if p.is_file()}, before)
+                    if existing:
+                        output.unlink()
+
+    def test_generation_keeps_unrelated_duplicate_fields_compatible(self):
+        info, thumbnail = self.root / 'info.json', self.root / 'thumb.png'
+        thumbnail.write_bytes(b'image')
+        info.write_text('{"id":"' + A + '","title":"old","title":"new"}')
+        output = self.collection / 'renamed.html'
+        self.assertIsNone(self.invoke(generator, info, thumbnail, output)[0])
+        self.assertIn('<h1>new</h1>', output.read_text())
+
+    def test_embedded_repeated_id_keys_fail_closed_across_consumers(self):
+        for second in (A, B):
+            with self.subTest(second=second):
+                bad = self.collection / 'renamed.html'
+                bad.write_text('<img src="' + IMAGE + '"><script id="youtube-metadata">' +
+                               '{"id":"' + A + '","id":"' + second + '","title":"Title"}</script>')
+                for identity in (A, B, C):
+                    status, stdout, stderr = self.invoke(finder, self.root, '--id', identity)
+                    self.assertEqual((status, stdout), (2, ''))
+                    self.assertIn("repeated 'id'", stderr)
+                self.assertEqual(self.invoke(finder, self.root, '--audit')[0], 1)
+                for operation in (('add', second, 'tag'), ('prune',)):
+                    self.assertEqual(self.invoke(tagger, self.root, *operation, '--apply')[0], 2)
+                self.assertFalse((self.root / 'catalog.json').exists())
+                with patch.object(indexer, 'Image', None):
+                    self.assertEqual(self.invoke(indexer, self.root)[0], 1)
+                self.assertFalse((self.root / 'index.html').exists())
+                original = bad.read_bytes()
+                self.assertEqual(self.invoke(upgrader, self.root, '--apply')[0], 1)
+                self.assertEqual(bad.read_bytes(), original)
+                self.assertEqual(list(self.root.glob('bookmarks-backup-*')), [])
+
+
 class CaptureTests(unittest.TestCase):
     def setUp(self):
         fixture = tempfile.TemporaryDirectory(prefix='.capture-test-', dir=PROJECT)
@@ -212,9 +262,14 @@ root = pathlib.Path(os.environ['VIDEX_FIXTURE_ROOT'])
 out = pathlib.Path(sys.argv[sys.argv.index('--paths') + 1])
 identity = json.loads(os.environ['VIDEX_FIXTURE_ID'])
 (out / 'fixture.info.json').write_text(json.dumps({'id': identity, 'title': 'Synthetic title', 'uploader': 'Synthetic channel'}))
+if 'VIDEX_FIXTURE_RAW_METADATA' in os.environ:
+    (out / 'fixture.info.json').write_text(os.environ['VIDEX_FIXTURE_RAW_METADATA'])
 (out / 'fixture.png').write_bytes(b'image')
 if os.environ.get('VIDEX_FIXTURE_CONFLICT'):
     (root / 'library' / 'bookmarks' / 'Conflict [AAAAAAAAAAA].html').write_text('<script id="youtube-metadata">{"id":"BBBBBBBBBBB"}</script>')
+if os.environ.get('VIDEX_FIXTURE_DUPLICATES'):
+    for name in ('duplicate-one.html', 'duplicate-two.html'):
+        (root / 'library' / 'bookmarks' / name).write_text('<script id="youtube-metadata">{"id":"BBBBBBBBBBB"}</script>')
 ''', encoding='utf-8')
         stub.chmod(0o700)
         self.environment = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
@@ -275,6 +330,51 @@ if os.environ.get('VIDEX_FIXTURE_CONFLICT'):
         refreshed = self.capture(None, '--overwrite', '--apply')
         self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
         self.assertEqual(list(self.collection.rglob('*.html')), [saved])
+
+    def test_unrelated_duplicate_ids_prevent_capture_without_library_changes(self):
+        for name in ('first.html', 'second.html'):
+            (self.collection / name).write_text(document(A))
+        catalog = self.library / 'catalog.json'
+        catalog.write_text(json.dumps({'version': 1, 'bookmarks': {A: {'tags': ['keep']}}, 'collections': {}}))
+        self.environment['VIDEX_FIXTURE_ID'] = json.dumps(C)
+        for extra in ((), ('--overwrite',), ('--apply',)):
+            with self.subTest(extra=extra):
+                before = {str(p): p.read_bytes() for p in self.library.rglob('*') if p.is_file()}
+                result = self.capture('https://youtu.be/' + C, *extra)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('Duplicate video ID ' + A, result.stderr)
+                self.assertFalse((self.root / 'extractor-called').exists())
+                self.assertEqual({str(p): p.read_bytes() for p in self.library.rglob('*') if p.is_file()}, before)
+
+    def test_unrelated_duplicates_introduced_by_extractor_prevent_writes(self):
+        self.environment['VIDEX_FIXTURE_ID'] = json.dumps(C)
+        self.environment['VIDEX_FIXTURE_DUPLICATES'] = '1'
+        result = self.capture('https://youtu.be/' + C)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertTrue((self.root / 'extractor-called').exists())
+        self.assertIn('Duplicate video ID ' + B, result.stderr)
+        self.assertEqual(sorted(path.name for path in self.collection.rglob('*.html')),
+                         ['duplicate-one.html', 'duplicate-two.html'])
+        self.assertFalse((self.library / 'catalog.json').exists())
+
+    def test_capture_rejects_conflicting_and_identical_duplicate_json_ids(self):
+        for second in (A, B):
+            with self.subTest(second=second):
+                self.environment['VIDEX_FIXTURE_RAW_METADATA'] = (
+                    '{"id":"' + A + '","id":"' + second + '","title":"Title"}')
+                result = self.capture()
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("repeated 'id'", result.stderr)
+                self.assertEqual(list(self.collection.rglob('*.html')), [])
+                self.assertFalse((self.library / 'catalog.json').exists())
+
+    def test_capture_accepts_unrelated_duplicate_metadata_fields(self):
+        self.environment['VIDEX_FIXTURE_RAW_METADATA'] = (
+            '{"id":"' + A + '","title":"old","title":"new","uploader":"Synthetic"}')
+        result = self.capture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        saved, = self.collection.rglob('*.html')
+        self.assertIn('<h1>new</h1>', saved.read_text())
 
 
 if __name__ == '__main__':

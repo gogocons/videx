@@ -94,12 +94,9 @@ PYID
   )" || exit 2
   URL="https://www.youtube.com/watch?v=$video_id"
 fi
-for file in yt-bookmark-generate.py yt-bookmark-find.py; do
+for file in yt-bookmark-generate.py yt-bookmark-find.py yt-bookmark-tag.py; do
   [[ -f "$SCRIPT_DIR/$file" ]] || { echo "ERROR: Missing $file" >&2; exit 1; }
 done
-if ((${#TAGS[@]})); then
-  [[ -f "$SCRIPT_DIR/yt-bookmark-tag.py" ]] || { echo 'ERROR: Missing yt-bookmark-tag.py' >&2; exit 1; }
-fi
 if ((RE_INDEX)); then
   [[ -f "$SCRIPT_DIR/yt-bookmark-index.py" ]] || { echo 'ERROR: Missing yt-bookmark-index.py' >&2; exit 1; }
 fi
@@ -133,6 +130,23 @@ lookup() {
   esac
 }
 
+inventory_preflight() {
+  python3 -B - "$LIBRARY_DIR" "$SCRIPT_DIR" <<'PYPREFLIGHT'
+import sys
+from pathlib import Path
+from importlib.util import module_from_spec, spec_from_file_location
+sys.path.insert(0, sys.argv[2])
+spec = spec_from_file_location('bookmark_tags', Path(sys.argv[2]) / 'yt-bookmark-tag.py')
+module = module_from_spec(spec)
+spec.loader.exec_module(module)
+try:
+    module.archive_ids(Path(sys.argv[1]), strict=True)
+except (OSError, ValueError) as exc:
+    print(f'ERROR: Capture inventory preflight failed: {exc}', file=sys.stderr)
+    sys.exit(2)
+PYPREFLIGHT
+}
+
 # A new capture already writes to disk, so its requested tags are applied
 # automatically. For existing bookmarks, tags are previewed unless --apply.
 # The tag utility validates membership and manages catalog backups.
@@ -157,6 +171,7 @@ existing=""
 lookup_status=0
 existing="$(lookup --url "$URL")" || lookup_status=$?
 if ((lookup_status == 2)); then exit 1; fi
+inventory_preflight || exit 1
 if ((lookup_status == 0 && !OVERWRITE)); then
   printf 'SKIPPED: Video already bookmarked: %s\n' "$existing"
   # Resolve the validated identity, including manually renamed bookmarks.
@@ -195,10 +210,15 @@ thumbnail="$(find "$tmpdir" -type f ! -name '*.info.json' -print -quit)"
 
 # Use Python for cross-platform path safety, including slashes in titles and channel names.
 fields="$(python3 -B - "$info_json" "$SCRIPT_DIR" <<'PY'
-import json, sys
+import sys
+from pathlib import Path
 sys.path.insert(0, sys.argv[2])
-from videx_identity import valid_id
-m=json.load(open(sys.argv[1], encoding='utf-8'))
+from videx_identity import loads_metadata, valid_id
+try:
+    m=loads_metadata(Path(sys.argv[1]).read_text(encoding='utf-8'))
+except (OSError, ValueError) as exc:
+    print(f'ERROR: Invalid extractor metadata; refusing capture: {exc}', file=sys.stderr)
+    sys.exit(2)
 if not isinstance(m, dict) or not valid_id(m.get('id')):
     print('ERROR: Extractor returned an invalid video ID; refusing capture', file=sys.stderr)
     sys.exit(2)
@@ -221,6 +241,7 @@ resolved_existing=""
 resolved_status=0
 resolved_existing="$(lookup --id "$video_id")" || resolved_status=$?
 if ((resolved_status == 2)); then exit 1; fi
+inventory_preflight || exit 1
 if ((resolved_status == 0)); then
   if ((OVERWRITE)); then
     output="$resolved_existing"

@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 with patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / 'scripts')] + sys.path):
-    from videx_identity import IdentityError, resolve_identity, valid_id
+    from videx_identity import IdentityError, loads_metadata, resolve_identity, valid_id
 
 A, B = 'AAAAAAAAAAA', 'BBBBBBBBBBB'
 
@@ -15,6 +15,24 @@ def embedded(payload):
 
 
 class IdentityTests(unittest.TestCase):
+    def test_repeated_id_keys_are_rejected_even_when_values_match(self):
+        for second in (A, B):
+            payload = '{"id":"' + A + '","id":"' + second + '"}'
+            for filename in ('renamed.html', f'Legacy [{second}].html'):
+                with self.subTest(second=second, filename=filename):
+                    with self.assertRaisesRegex(IdentityError, "repeated 'id'"):
+                        resolve_identity(filename, embedded(payload))
+            with self.assertRaisesRegex(IdentityError, "repeated 'id'"):
+                loads_metadata(payload)
+
+    def test_other_duplicate_metadata_keys_keep_last_value(self):
+        payload = '{"id":"' + A + '","title":"old","title":"new",' \
+                  '"extra":{"field":1,"field":2}}'
+        metadata = loads_metadata(payload)
+        self.assertEqual(metadata['title'], 'new')
+        self.assertEqual(metadata['extra'], {'field': 2})
+        self.assertEqual(resolve_identity('renamed.html', embedded(payload)), A)
+
     def test_valid_identity_matrix(self):
         for filename, document in (
             (f'Title [{A}].html', embedded('{"id":"' + A + '"}')),

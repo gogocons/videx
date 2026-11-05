@@ -14,7 +14,7 @@ import stat
 import sys
 from urllib.parse import quote
 from videx_config import default_library
-from videx_identity import resolve_identity
+from videx_identity import loads_metadata, resolve_identity
 
 try:
     from PIL import Image, ImageOps
@@ -75,7 +75,7 @@ def parse_bookmark(path, root, width, library_root):
     parser.feed(source)
     if not parser.metadata_chunks:
         raise ValueError('no embedded youtube-metadata JSON')
-    metadata = json.loads(''.join(parser.metadata_chunks))
+    metadata = loads_metadata(''.join(parser.metadata_chunks))
     if not isinstance(metadata, dict):
         raise ValueError('metadata is not an object')
     duration = metadata.get('duration')

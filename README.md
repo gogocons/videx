@@ -92,6 +92,8 @@ Videx identifies existing bookmarks by **video ID**, rather than their title or 
 
 Video IDs are case-sensitive 11-character strings containing letters, digits, `_` or `-`. A filename ID must agree with embedded metadata. Renamed bookmarks use their metadata ID; legacy filename-only bookmarks remain supported by lookup and tagging only when the metadata element is absent. Present but malformed metadata never falls back to the filename. Lookup and catalog changes refuse conflicting, ambiguous, or incomplete inventories (status `2`); capture stops on lookup failure and validates the extractor's unchanged ID before writing. Indexing and offline upgrades warn and skip damaged or conflicting pages, including legacy pages lacking the metadata they require. Audit reports conflicts separately from resolved IDs. No identity is automatically repaired.
 
+Capture also checks the entire bookmark inventory before extraction and again before writing, rejecting duplicate IDs anywhere in the collection under the same rules as catalog mutations. Embedded and incoming metadata JSON reject repeated `id` keys even when their values match; other repeated keys retain their existing last-value behavior.
+
 The `--output` argument always specifies a **library root**, not its `bookmarks/` subdirectory. The library's bookmarks live under `<library>/bookmarks/`, and its index is `<library>/index.html`.
 
 ### Library integrity audit

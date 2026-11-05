@@ -13,7 +13,7 @@ import sys
 sys.dont_write_bytecode = True
 from importlib.util import spec_from_file_location, module_from_spec
 from urllib.parse import quote, urlsplit
-from videx_identity import bookmark_identity, resolve_identity
+from videx_identity import bookmark_identity, loads_metadata, resolve_identity
 
 
 def load_curator():
@@ -165,7 +165,7 @@ def main():
     p.add_argument('output', type=Path)
     p.add_argument('--back-link', help='Relative path to collection index.html')
     args = p.parse_args()
-    metadata = json.loads(args.info_json.read_text(encoding='utf-8'))
+    metadata = loads_metadata(args.info_json.read_text(encoding='utf-8'))
     mime = mimetypes.guess_type(args.thumbnail.name)[0] or 'application/octet-stream'
     image_uri = f'data:{mime};base64,' + base64.b64encode(args.thumbnail.read_bytes()).decode('ascii')
     document = make_document(metadata, image_uri, args.back_link)

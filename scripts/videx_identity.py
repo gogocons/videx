@@ -21,6 +21,19 @@ class IdentityError(ValueError):
         self.metadata_id = metadata_id
 
 
+def loads_metadata(document):
+    """Reject repeated id members; other duplicate keys retain JSON's last value."""
+    def metadata_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key == 'id' and key in result:
+                raise IdentityError("repeated 'id' key in metadata JSON")
+            result[key] = value
+        return result
+
+    return json.loads(document, object_pairs_hook=metadata_object)
+
+
 class MetadataParser(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -56,7 +69,7 @@ def resolve_identity(filename, document):
     if parser.count != 1 or parser.active:
         raise IdentityError('multiple or unterminated metadata elements')
     try:
-        metadata = json.loads(''.join(parser.parts))
+        metadata = loads_metadata(''.join(parser.parts))
     except ValueError as exc:
         raise IdentityError(f'invalid metadata JSON: {exc}') from exc
     if not isinstance(metadata, dict) or not valid_id(metadata.get('id')):
