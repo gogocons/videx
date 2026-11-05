@@ -2,35 +2,13 @@
 """Locate existing Videx bookmarks by video ID, without network access."""
 import argparse
 from collections import defaultdict
-from html.parser import HTMLParser
-import json
+import os
 from pathlib import Path
-import re
+import stat
 import sys
 from urllib.parse import parse_qs, unquote, urlsplit
 from videx_config import default_library
-
-VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
-FILE_ID = re.compile(r"\[([A-Za-z0-9_-]{11})\]\.html$", re.I)
-
-
-class MetadataParser(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.inside = False
-        self.chunks = []
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "script" and dict(attrs).get("id") == "youtube-metadata":
-            self.inside = True
-
-    def handle_endtag(self, tag):
-        if tag == "script":
-            self.inside = False
-
-    def handle_data(self, data):
-        if self.inside:
-            self.chunks.append(data)
+from videx_identity import VIDEO_ID, IdentityError, bookmark_identity
 
 
 def extract_id(url):
@@ -57,67 +35,68 @@ def extract_id(url):
         return None
 
 
-def archived_id(path):
-    parser = MetadataParser()
-    parser.feed(path.read_text(encoding="utf-8"))
-    if not parser.chunks:
-        return None
-    data = json.loads("".join(parser.chunks))
-    return data.get("id") if isinstance(data, dict) else None
+def inventory(root):
+    """Inspect only the bookmark collection, retaining every traversal failure."""
+    files, identities, issues = [], {}, []
 
-
-def matches(root, video_id):
-    found = []
-    for path in sorted(root.rglob("*.html")) if root.is_dir() else []:
-        if path.name == "index.html":
-            continue
-        match = FILE_ID.search(path.name)
-        if match and match.group(1) == video_id:
-            found.append(path)
-            continue
-        if match:
-            continue
-        # Fallback for manually renamed Videx bookmarks.
+    def walk(directory):
         try:
-            if archived_id(path) == video_id:
-                found.append(path)
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            pass
-    return found
+            with os.scandir(directory) as entries:
+                children = sorted(entries, key=lambda entry: entry.name)
+            for entry in children:
+                path = Path(entry.path)
+                if path.name.lower() == 'index.html':
+                    continue
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                    if stat.S_ISLNK(mode):
+                        raise ValueError('symbolic link prevents a complete local inventory')
+                    if stat.S_ISDIR(mode):
+                        walk(path)
+                    elif path.suffix == '.html':
+                        if not stat.S_ISREG(mode):
+                            raise ValueError('bookmark is not a regular file')
+                        files.append(path)
+                except (OSError, ValueError) as exc:
+                    issues.append((path, IdentityError(str(exc))))
+        except OSError as exc:
+            issues.append((directory, IdentityError(str(exc))))
+
+    try:
+        if not stat.S_ISDIR(root.lstat().st_mode):
+            raise ValueError('bookmarks collection must be a regular directory, not a symbolic link')
+    except (OSError, ValueError) as exc:
+        return files, identities, [(root, IdentityError(str(exc)))], False
+    walk(root)
+    for path in files:
+        try:
+            identities[path] = bookmark_identity(path)
+        except IdentityError as exc:
+            issues.append((path, exc))
+        except (OSError, UnicodeError) as exc:
+            issues.append((path, IdentityError(str(exc))))
+    available = not any(path == root for path, _ in issues)
+    return files, identities, issues, available
+
+
+def describe_issue(path, issue):
+    detail = f'{issue.category}: {path}: {issue}'
+    if issue.category == 'MISMATCH':
+        detail += f'\n  Filename ID: {issue.filename_id}\n  Metadata ID: {issue.metadata_id}'
+    return detail
 
 
 
 def audit_library(library):
     root = library / "bookmarks"
-    if not root.is_dir():
-        print(f"ERROR: Bookmarks directory does not exist: {root}", file=sys.stderr)
+    files, identities, issues, available = inventory(root)
+    if not available:
+        for path, issue in issues:
+            print(f'ERROR: {describe_issue(path, issue)}', file=sys.stderr)
         return 2
-
-    files = sorted(path for path in root.rglob("*.html") if path.is_file() and path.name != "index.html")
     groups = defaultdict(list)
-    mismatches = []
-    unknown = []
-    unreadable = []
-
-    for path in files:
-        name_match = FILE_ID.search(path.name)
-        filename_id = name_match.group(1) if name_match else None
-        try:
-            metadata_id = archived_id(path)
-        except (OSError, UnicodeError, ValueError, TypeError) as exc:
-            unreadable.append((path, str(exc)))
-            continue
-
-        valid_metadata_id = metadata_id if isinstance(metadata_id, str) and VIDEO_ID.fullmatch(metadata_id) else None
-        if filename_id and valid_metadata_id and filename_id != valid_metadata_id:
-            mismatches.append((path, filename_id, valid_metadata_id))
-
-        # Embedded metadata is authoritative for duplicate grouping.
-        video_id = valid_metadata_id or filename_id
-        if video_id:
-            groups[video_id].append(path)
-        else:
-            unknown.append(path)
+    for path, video_id in identities.items():
+        groups[video_id].append(path)
 
     duplicate_groups = [(video_id, paths) for video_id, paths in sorted(groups.items()) if len(paths) > 1]
     print(f"Scanning {len(files)} HTML files in {root}")
@@ -125,25 +104,17 @@ def audit_library(library):
         print(f"\nDUPLICATE: {video_id}")
         for path in paths:
             print(f"  {path.relative_to(library)}")
-    for path, filename_id, metadata_id in mismatches:
-        print(f"\nMISMATCH: {path.relative_to(library)}")
-        print(f"  Filename ID: {filename_id}")
-        print(f"  Metadata ID: {metadata_id}")
-    for path in unknown:
-        print(f"\nUNKNOWN: {path.relative_to(library)}")
-        print("  No valid video ID found in filename or embedded metadata")
-    for path, error in unreadable:
-        print(f"\nUNREADABLE: {path.relative_to(library)}")
-        print(f"  {error}")
+    for path, issue in issues:
+        print('\n' + describe_issue(path.relative_to(library), issue))
 
     print(f"\nScanned: {len(files)}")
     print(f"Unique video IDs: {len(groups)}")
     print(f"Duplicate groups: {len(duplicate_groups)}")
     print(f"Extra copies: {sum(len(paths) - 1 for _, paths in duplicate_groups)}")
-    print(f"Mismatches: {len(mismatches)}")
-    print(f"Unknown IDs: {len(unknown)}")
-    print(f"Unreadable files: {len(unreadable)}")
-    return 1 if duplicate_groups or mismatches or unknown or unreadable else 0
+    print(f"Mismatches: {sum(issue.category == 'MISMATCH' for _, issue in issues)}")
+    print(f"Unknown IDs: {sum(issue.category == 'UNKNOWN' for _, issue in issues)}")
+    print(f"Unreadable files: {sum(issue.category == 'UNREADABLE' for _, issue in issues)}")
+    return 1 if duplicate_groups or issues else 0
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -163,7 +134,13 @@ def main():
     if not video_id or not VIDEO_ID.fullmatch(video_id):
         # URL not resolvable locally: let yt-dlp determine its ID.
         return 3 if args.url else 2
-    found = matches(args.library / "bookmarks", video_id)
+    _, identities, issues, _ = inventory(args.library / 'bookmarks')
+    if issues:
+        for path, issue in issues:
+            print(f'ERROR: {describe_issue(path, issue)}', file=sys.stderr)
+        print('ERROR: Incomplete or conflicting bookmark inventory; no path selected.', file=sys.stderr)
+        return 2
+    found = [path for path, identity in identities.items() if identity == video_id]
     if len(found) > 1:
         print(f"ERROR: Multiple bookmarks have video ID {video_id}:", file=sys.stderr)
         for path in found:
