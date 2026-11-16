@@ -202,6 +202,7 @@ def main():
             elif op == 'set': after = desired
             else: after = unique([new if t.casefold() == old.casefold() else t for t in before])
             if after != before:
+                after = sorted(after, key=str.casefold)
                 changes.append((vid, before, after))
                 if after:
                     catalog['bookmarks'].setdefault(vid, {})['tags'] = after

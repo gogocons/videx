@@ -372,7 +372,67 @@ if os.environ.get('VIDEX_FIXTURE_BAD_CATALOG'):
         result = self.capture(None, '--tag', '  Multi\n Word\t', '--tag', 'multi word', '--tag', 'é' * 80)
         self.assertEqual(result.returncode, 0, result.stderr)
         catalog = json.loads((self.library / 'catalog.json').read_text())
-        self.assertEqual(catalog['bookmarks'][A]['tags'], ['personal', 'Multi Word', 'é' * 80])
+        self.assertEqual(catalog['bookmarks'][A]['tags'], ['Multi Word', 'personal', 'é' * 80])
+
+    def test_new_capture_tag_order_is_independent_of_insertion_order(self):
+        for identity, values in ((A, ['Zulu', 'Beta', 'alpha', 'HIDDEN', 'beta']),
+                                 (C, ['alpha', 'Beta', 'beta', 'HIDDEN', 'Zulu'])):
+            with self.subTest(identity=identity):
+                self.environment['VIDEX_FIXTURE_ID'] = json.dumps(identity)
+                arguments = [argument for value in values for argument in ('--tag', value)]
+                result = self.capture('https://youtu.be/' + identity, *arguments, with_tags=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                catalog = json.loads((self.library / 'catalog.json').read_text())
+                self.assertEqual(catalog['bookmarks'][identity]['tags'],
+                                 ['alpha', 'Beta', 'hidden', 'Zulu'])
+
+    def test_existing_capture_sorts_only_applied_tag_changes(self):
+        path = self.collection / 'renamed.html'
+        path.write_text(document(A), encoding='utf-8')
+        catalog = self.library / 'catalog.json'
+        original = {'version': 1, 'bookmarks': {
+            A: {'tags': ['Zulu', 'Beta', 'beta'], 'notes': 'keep'},
+            B: {'tags': ['Zulu', 'Alpha'], 'notes': 'unrelated'},
+        }, 'collections': {'saved': [A]}, 'extra': True}
+        catalog.write_text(json.dumps(original), encoding='utf-8')
+        before = catalog.read_bytes()
+        preview = self.capture(None, '--tag', 'alpha', with_tags=False)
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertIn("-> ['alpha', 'Beta', 'Zulu']", preview.stdout)
+        self.assertEqual(catalog.read_bytes(), before)
+        self.assertEqual(list(self.library.glob('catalog.json.bak-*')), [])
+        applied = self.capture(None, '--tag', 'alpha', '--apply', with_tags=False)
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        original['bookmarks'][A]['tags'] = ['alpha', 'Beta', 'Zulu']
+        self.assertEqual(json.loads(catalog.read_text()), original)
+        backups = list(self.library.glob('catalog.json.bak-*'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), before)
+        added = self.capture(None, '--tag', 'HIDDEN', '--tag', 'Gamma', '--apply',
+                             with_tags=False)
+        self.assertEqual(added.returncode, 0, added.stderr)
+        original['bookmarks'][A]['tags'] = ['alpha', 'Beta', 'Gamma', 'hidden', 'Zulu']
+        self.assertEqual(json.loads(catalog.read_text()), original)
+        self.assertFalse((self.root / 'extractor-called').exists())
+        self.assertEqual(path.read_text(encoding='utf-8'), document(A))
+
+    def test_refreshed_capture_sorts_tags_only_with_apply(self):
+        path = self.collection / 'renamed.html'
+        path.write_text(document(A), encoding='utf-8')
+        catalog = self.library / 'catalog.json'
+        original = json.dumps({'version': 1, 'bookmarks': {
+            A: {'tags': ['Zulu', 'Beta']}}, 'collections': {}})
+        catalog.write_text(original, encoding='utf-8')
+        preview = self.capture(None, '--overwrite', '--tag', 'alpha', with_tags=False)
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertEqual(catalog.read_text(encoding='utf-8'), original)
+        self.assertEqual(list(self.library.glob('catalog.json.bak-*')), [])
+        applied = self.capture(None, '--overwrite', '--tag', 'alpha', '--apply',
+                               with_tags=False)
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual(json.loads(catalog.read_text())['bookmarks'][A]['tags'],
+                         ['alpha', 'Beta', 'Zulu'])
+        self.assertEqual(list(self.collection.rglob('*.html')), [path])
 
     def test_untagged_capture_skip_refresh_and_reindex_on_system_bash(self):
         # Use the platform's actual /bin/bash, not an assumed modern substitute.

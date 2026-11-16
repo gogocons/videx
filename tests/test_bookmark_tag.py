@@ -1,4 +1,4 @@
-"""Offline prune regressions using an entirely synthetic filesystem."""
+"""Offline tag and prune regressions using synthetic filesystems."""
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from importlib.util import module_from_spec, spec_from_file_location
 import io
@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import stat
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -23,6 +24,94 @@ A, B = 'AAAAAAAAAAA', 'BBBBBBBBBBB'
 
 def bookmark(video_id):
     return '<script id="youtube-metadata">' + json.dumps({'id': video_id}) + '</script>'
+
+
+class TagOrderingTests(unittest.TestCase):
+    def setUp(self):
+        fixture = tempfile.TemporaryDirectory()
+        self.addCleanup(fixture.cleanup)
+        self.root = Path(fixture.name)
+        collection = self.root / 'bookmarks'
+        collection.mkdir()
+        for video_id in (A, B):
+            (collection / f'{video_id}.html').write_text(bookmark(video_id), encoding='utf-8')
+        self.path = self.root / 'catalog.json'
+        self.catalog = {'version': 1, 'bookmarks': {
+            A: {'tags': ['Zulu', 'Beta', 'beta'], 'notes': 'keep'},
+            B: {'tags': ['Zulu', 'Alpha', 'alpha'], 'extra': [1, 2]},
+        }, 'collections': {'saved': [A, B]}, 'extra': {'keep': True}}
+        self.path.write_text(json.dumps(self.catalog), encoding='utf-8')
+
+    def invoke(self, *arguments, apply=True):
+        output = io.StringIO()
+        with patch.object(sys, 'argv', ['tag', str(self.root), *arguments,
+                                       *(['--apply'] if apply else [])]), \
+                redirect_stdout(output), redirect_stderr(output):
+            status = tagger.main()
+        self.assertEqual(status, 0, output.getvalue())
+        return output.getvalue()
+
+    def saved(self):
+        return json.loads(self.path.read_text(encoding='utf-8'))
+
+    def test_set_insertion_orders_capitalization_duplicates_and_hidden(self):
+        for values in (['Zulu', 'alpha', 'Beta', 'HIDDEN', 'beta', 'ALPHA'],
+                       ['HIDDEN', 'Beta', 'alpha', 'ALPHA', 'Zulu', 'beta']):
+            with self.subTest(values=values):
+                self.invoke('set', A, *values)
+                self.assertEqual(self.saved()['bookmarks'][A]['tags'],
+                                 ['alpha', 'Beta', 'hidden', 'Zulu'])
+
+    def test_add_normalizes_modified_record_and_subsequent_additions(self):
+        self.invoke('add', A, 'alpha', 'ALPHA', 'beta')
+        self.assertEqual(self.saved()['bookmarks'][A]['tags'], ['alpha', 'Beta', 'Zulu'])
+        self.invoke('add', A, 'HIDDEN', 'Gamma', 'gamma')
+        expected = json.loads(json.dumps(self.catalog))
+        expected['bookmarks'][A]['tags'] = ['alpha', 'Beta', 'Gamma', 'hidden', 'Zulu']
+        self.assertEqual(self.saved(), expected)
+
+    def test_remove_and_rename_sort_only_modified_records(self):
+        for arguments, tags in ((('remove', A, 'beta'), ['Zulu']),
+                                (('rename', 'Beta', 'alpha'), ['alpha', 'Zulu'])):
+            with self.subTest(arguments=arguments):
+                self.path.write_text(json.dumps(self.catalog), encoding='utf-8')
+                self.invoke(*arguments)
+                expected = json.loads(json.dumps(self.catalog))
+                expected['bookmarks'][A]['tags'] = tags
+                self.assertEqual(self.saved(), expected)
+
+    def test_remove_sorts_remaining_unsorted_tags(self):
+        self.invoke('set', A, 'Zulu', 'Beta', 'alpha')
+        catalog = self.saved()
+        catalog['bookmarks'][A]['tags'] = ['Zulu', 'Beta', 'alpha']
+        self.path.write_text(json.dumps(catalog), encoding='utf-8')
+        self.invoke('remove', A, 'beta')
+        self.assertEqual(self.saved()['bookmarks'][A]['tags'], ['alpha', 'Zulu'])
+
+    def test_preview_shows_sorted_result_without_writing_or_backup(self):
+        original = self.path.read_bytes()
+        output = self.invoke('add', A, 'alpha', apply=False)
+        self.assertIn("-> ['alpha', 'Beta', 'Zulu']", output)
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(list(self.root.glob('catalog.json.bak-*')), [])
+
+    def test_no_ops_do_not_normalize_or_back_up_existing_records(self):
+        original = self.path.read_bytes()
+        for arguments in (('add', A, 'BETA'), ('remove', A, 'absent'),
+                          ('set', A, 'Zulu', 'Beta'), ('rename', 'absent', 'Alpha'),
+                          ('rename', 'Beta', 'Beta')):
+            with self.subTest(arguments=arguments):
+                self.assertIn('No changes needed.', self.invoke(*arguments))
+                self.assertEqual(self.path.read_bytes(), original)
+                self.assertEqual(list(self.root.glob('catalog.json.bak-*')), [])
+
+    def test_prune_does_not_sort_surviving_records(self):
+        orphan = 'CCCCCCCCCCC'
+        self.catalog['bookmarks'][orphan] = {'tags': ['Zulu', 'Alpha']}
+        self.path.write_text(json.dumps(self.catalog), encoding='utf-8')
+        self.invoke('prune')
+        del self.catalog['bookmarks'][orphan]
+        self.assertEqual(self.saved(), self.catalog)
 
 
 class PruneTests(unittest.TestCase):

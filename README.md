@@ -142,6 +142,8 @@ python3 -B scripts/yt-bookmark-tag.py prune
 
 `remove` removes the requested tags; `set` replaces all personal tags for that video (with no tag arguments, it previews clearing them). `rename` previews replacement across matching library bookmarks. `list` and `report` are read-only. `prune` previews removal of catalog entries without matching bookmarks and refuses incomplete inventories; it never deletes bookmark HTML. None of these commands rebuilds the index automatically.
 
+When a tag operation changes a video's record, its tags are saved alphabetically, case-insensitively, preserving display capitalization and case-insensitive deduplication (`hidden` retains its lowercase normalization and sorts normally). This also applies to capture-time tagging. Unrelated records and no-op requests do not have their tags reordered.
+
 Place an explicit library root before the operation to override configuration:
 
 ```bash
