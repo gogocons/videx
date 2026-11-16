@@ -3,6 +3,7 @@ from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
+import os
 from pathlib import Path
 import stat
 import sys
@@ -114,6 +115,155 @@ class TagOrderingTests(unittest.TestCase):
         self.assertEqual(self.saved(), self.catalog)
 
 
+class CatalogValidationTests(unittest.TestCase):
+    operations = (
+        ('add', A, 'new'), ('remove', A, 'keep'), ('set', A, 'new'),
+        ('rename', 'keep', 'new'), ('list', A), ('report',), ('prune',),
+        # Requests that would otherwise make no changes, plus clearing tags.
+        ('add', A, 'keep'), ('remove', A, 'absent'), ('set', A, 'keep'),
+        ('rename', 'absent', 'new'), ('set', A),
+    )
+
+    def setUp(self):
+        fixture = tempfile.TemporaryDirectory()
+        self.addCleanup(fixture.cleanup)
+        self.root = Path(fixture.name).resolve()
+        collection = self.root / 'bookmarks'
+        collection.mkdir()
+        for video_id in (A, B):
+            (collection / f'{video_id}.html').write_text(bookmark(video_id), encoding='utf-8')
+        self.path = self.root / 'catalog.json'
+        (self.root / 'catalog.json.bak-existing').write_bytes(b'preserve backup\n')
+        self.catalog = {'version': 1, 'bookmarks': {
+            A: {'tags': ['keep'], 'notes': 'preserve'},
+            B: {'tags': ['keep'], 'extra': [1, 2]},
+            'CCCCCCCCCCC': {'tags': ['keep'], 'orphan': True},
+        }, 'collections': {'saved': [A, B]}, 'extra': {'preserve': True}}
+
+    def invoke(self, arguments, apply=False):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(sys, 'argv', ['tag', str(self.root), *arguments,
+                                       *(['--apply'] if apply else [])]), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            status = tagger.main()
+        return status, stdout.getvalue(), stderr.getvalue()
+
+    def snapshot(self):
+        # Never open symlinks or special files, even when checking preservation.
+        result = {}
+        for path in self.root.rglob('*'):
+            mode = path.lstat().st_mode
+            value = (path.read_bytes() if stat.S_ISREG(mode) else
+                     os.readlink(path) if stat.S_ISLNK(mode) else None)
+            result[str(path.relative_to(self.root))] = (mode, value)
+        return result
+
+    def assert_refused(self, diagnostic):
+        before = self.snapshot()
+        for arguments in self.operations:
+            for apply in (False, True):
+                with self.subTest(arguments=arguments, apply=apply), \
+                        patch.object(tagger, 'archive_ids') as inventory, \
+                        patch.object(tagger, 'write_catalog') as writer, \
+                        patch.object(tagger.tempfile, 'NamedTemporaryFile') as staging:
+                    status, stdout, stderr = self.invoke(arguments, apply)
+                    self.assertEqual(status, 2)
+                    self.assertEqual(stdout, '')
+                    self.assertIn('ERROR:', stderr)
+                    self.assertIn(str(self.path), stderr)
+                    self.assertIn(diagnostic, stderr)
+                    self.assertNotIn('Traceback', stderr)
+                    inventory.assert_not_called()
+                    writer.assert_not_called()
+                    staging.assert_not_called()
+                    self.assertEqual(self.snapshot(), before)
+                    self.assertEqual(list(self.root.glob('catalog.json.bak-*')),
+                                     [self.root / 'catalog.json.bak-existing'])
+                    self.assertEqual(list(self.root.glob('.catalog-*.tmp')), [])
+
+    def test_valid_target_symlink_is_preserved_without_reading(self):
+        target = self.root / 'target.json'
+        target.write_text(json.dumps(self.catalog), encoding='utf-8')
+        self.path.symlink_to(target)
+        with patch.object(Path, 'read_text', side_effect=AssertionError('must not read catalog')):
+            self.assert_refused('regular file')
+        self.assertTrue(self.path.is_symlink())
+
+    def test_dangling_symlink_is_preserved_without_creating_target(self):
+        target = self.root / 'missing.json'
+        self.path.symlink_to(target)
+        with patch.object(Path, 'read_text', side_effect=AssertionError('must not read catalog')):
+            self.assert_refused('regular file')
+        self.assertTrue(self.path.is_symlink())
+        self.assertFalse(target.exists())
+
+    def test_directory_is_preserved_without_reading(self):
+        self.path.mkdir()
+        (self.path / 'sentinel').write_bytes(b'preserve directory contents')
+        with patch.object(Path, 'read_text', side_effect=AssertionError('must not read catalog')):
+            self.assert_refused('regular file')
+
+    def test_fifo_is_preserved_without_opening(self):
+        os.mkfifo(self.path)
+        with patch.object(Path, 'read_text', side_effect=AssertionError('must not open FIFO')):
+            self.assert_refused('regular file')
+
+    def test_other_special_file_modes_are_refused_without_reading(self):
+        original_lstat = Path.lstat
+        for mode in (stat.S_IFSOCK, stat.S_IFCHR, stat.S_IFBLK):
+            def lstat(path, *args, **kwargs):
+                if path == self.path:
+                    return SimpleNamespace(st_mode=mode)
+                return original_lstat(path, *args, **kwargs)
+            with self.subTest(mode=mode), patch.object(Path, 'lstat', lstat), \
+                    patch.object(Path, 'read_text', side_effect=AssertionError('must not read device')):
+                self.assert_refused('regular file')
+
+    def test_nonstring_tags_in_selected_unrelated_and_orphan_records(self):
+        for video_id in (A, B, 'CCCCCCCCCCC'):
+            for value in (1, 1.5, None, True, False, {}, []):
+                for tags in ([value], ['keep', value]):
+                    with self.subTest(video_id=video_id, tags=tags):
+                        catalog = json.loads(json.dumps(self.catalog))
+                        catalog['bookmarks'][video_id]['tags'] = tags
+                        # Deliberately preserve noncanonical formatting and bytes.
+                        self.path.write_bytes(('  ' + json.dumps(catalog) + '\n\n').encode('utf-8'))
+                        self.assert_refused(f'tags for {video_id} must contain only strings')
+
+    def test_missing_catalog_previews_and_read_only_operations_do_not_create_it(self):
+        for arguments in self.operations:
+            with self.subTest(arguments=arguments):
+                before = self.snapshot()
+                status, _, stderr = self.invoke(arguments)
+                self.assertEqual((status, stderr), (0, ''))
+                self.assertEqual(self.snapshot(), before)
+        for arguments in (('remove', A, 'keep'), ('set', A),
+                          ('rename', 'absent', 'new'), ('list', A), ('report',), ('prune',)):
+            with self.subTest(arguments=arguments, apply=True):
+                before = self.snapshot()
+                status, _, stderr = self.invoke(arguments, apply=True)
+                self.assertEqual((status, stderr), (0, ''))
+                self.assertEqual(self.snapshot(), before)
+
+    def test_missing_catalog_creation_and_regular_catalog_backup(self):
+        status, _, stderr = self.invoke(('add', A, ' Zulu ', 'HIDDEN', 'alpha', 'ALPHA'), apply=True)
+        self.assertEqual((status, stderr), (0, ''))
+        self.assertEqual(json.loads(self.path.read_bytes()), {
+            'version': 1, 'bookmarks': {A: {'tags': ['alpha', 'hidden', 'Zulu']}}, 'collections': {}})
+        self.assertEqual(list(self.root.glob('catalog.json.bak-*')),
+                         [self.root / 'catalog.json.bak-existing'])
+        original = self.path.read_bytes()
+        status, _, stderr = self.invoke(('add', A, 'Beta'), apply=True)
+        self.assertEqual((status, stderr), (0, ''))
+        backups = [path for path in self.root.glob('catalog.json.bak-*')
+                   if path.name != 'catalog.json.bak-existing']
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), original)
+        self.assertEqual(json.loads(self.path.read_bytes())['bookmarks'][A]['tags'],
+                         ['alpha', 'Beta', 'hidden', 'Zulu'])
+        self.assertEqual(list(self.root.glob('.catalog-*.tmp')), [])
+
+
 class PruneTests(unittest.TestCase):
     def run_prune(self, files, apply=False, traversal_failure=False):
         catalog = {'version': 1, 'bookmarks': {
@@ -158,6 +308,7 @@ class PruneTests(unittest.TestCase):
             stack.enter_context(patch.object(Path, 'is_dir', return_value=True))
             stack.enter_context(patch.object(Path, 'is_symlink', return_value=False))
             stack.enter_context(patch.object(Path, 'exists', return_value=True))
+            stack.enter_context(patch.object(Path, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFREG)))
             stack.enter_context(patch.object(Path, 'read_text', read_text))
             stack.enter_context(patch.object(tagger.os, 'scandir', side_effect=scandir))
             writer = stack.enter_context(patch.object(tagger, 'write_catalog'))

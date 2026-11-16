@@ -19,14 +19,20 @@ def empty():
 
 
 def load(path):
-    if not path.exists():
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
         return empty()
+    if not stat.S_ISREG(mode):
+        raise ValueError(f'{path}: catalog must be a regular file, not a symlink or special file')
     obj = json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(obj, dict) or obj.get('version') != 1 or not isinstance(obj.get('bookmarks'), dict) or not isinstance(obj.get('collections'), dict):
         raise ValueError('Unsupported or invalid catalog schema; refusing to modify')
     for video_id, record in obj['bookmarks'].items():
         if not ID.fullmatch(video_id) or not isinstance(record, dict) or not isinstance(record.get('tags', []), list):
             raise ValueError(f'Invalid catalog entry: {video_id}')
+        if any(not isinstance(value, str) for value in record.get('tags', [])):
+            raise ValueError(f'{path}: tags for {video_id} must contain only strings')
     return obj
 
 
