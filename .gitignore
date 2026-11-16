@@ -22,3 +22,12 @@ __MACOSX/
 /config.local.json
 .env
 .env.*
+
+# Local demo library (generated bookmarks and metadata)
+/demo/
+
+# Private development tools and local extraction data
+/tools/
+
+# Interrupted social-preview publication staging files
+/docs/social-preview/.social-preview-*
