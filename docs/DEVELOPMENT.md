@@ -66,6 +66,16 @@ Follow [AGENTS.md](../AGENTS.md). Preserve offline functionality, macOS/Linux po
 
 Use disposable synthetic fixtures for regressions; never run development checks against personal or production bookmark collections without explicit authorization. Preserve preview defaults, explicit `--apply` where supported, backups, and persistent metadata, tags, and catalog entries. Update documentation when installation, configuration, or user-facing behavior changes.
 
+## Optional social-preview artwork
+
+The [social-preview workflow](social-preview/README.md) maintains the repository
+sharing image independently of Videx runtime operations. Run
+`python3 -B docs/social-preview/generate-social-preview.py` on macOS for SVG and
+validated PNG output, or add `--svg-only` on macOS/Linux. Python is the authoritative
+artwork source; native PNG rendering needs Apple's Swift development tools and
+`sips`. No additional runtime dependencies or automatic capture/index hooks are
+introduced. Rendering differences require visual review before accepting artwork.
+
 ## Project history and current implementation
 
 **Origin:** A simple local alternative to YouTube's bookmark/playlist front end. The first iteration generated a self-contained HTML page for each saved video.
