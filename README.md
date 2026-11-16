@@ -7,239 +7,47 @@
 
 **An offline-first video bookmarking and reference library.**
 
-Videx began as a way to keep useful YouTube video references without depending on YouTube's bookmarking interface. It saves **metadata and thumbnails, not video files**, as standalone HTML pages and builds a searchable offline index. The project is currently focused on YouTube and uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for extraction. Videx is not affiliated with YouTube or Google.
+Videx saves YouTube **metadata and thumbnails, not video files**, as standalone HTML bookmarks and builds a searchable local index. Keep useful video references without depending on YouTube's bookmarking interface, and browse saved descriptions, chapters, and metadata offline. Original video links may become unavailable; Videx does not preserve playback or transcripts.
+
+The project currently focuses on YouTube and uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for extraction. Videx is not affiliated with YouTube or Google.
 
 ## Screenshots
 
 ### Video Library
 
-Browse, search, filter, and sort your saved video references without an internet connection.
+Browse, search, filter channels, and sort saved references offline.
 
 ![Videx video library](docs/screenshots/library.png)
 
 ### Individual Bookmarks
 
-Each bookmark is a standalone HTML page containing the video's thumbnail, description, metadata, and links to the original video.
+Each standalone page contains a thumbnail, description, metadata, and links to the original video.
 
 ![Videx individual bookmark](docs/screenshots/bookmark.png)
 
-## Current features (v0.3.0)
+## Current features
 
-- Save a single video's title, channel, description, chapters, dates, tags, historical counts and thumbnail in a self-contained HTML page.
-- Browse a generated `index.html` offline; search by title, channel, description, video ID, and personal tags using the existing search bar, filter channels, and sort by upload date/title/channel.
-- Preserve a curated metadata schema without large extractor manifests (formats, automatic caption manifests, etc.).
-- **Prevent duplicate bookmarks by video ID**, even when a video's title or channel changes. Existing IDs are skipped by default.
-- **Refresh existing bookmarks with `--overwrite`**, preserving their original filenames and locations.
-- **Optionally rebuild the index with `--re-index`** after saving, refreshing or skipping a bookmark; otherwise indexing remains manual.
-- **Audit a library for duplicates and ID inconsistencies** using the read-only `yt-bookmark-find.py --audit` command. The detector can recognize renamed bookmarks through their embedded metadata.
-- Upgrade previously saved bookmark pages **offline**, with a dry run and backups before applying changes.
-- Keep your library outside the source repository using `config.local.json`, or override the destination with `--output`. Without local configuration, the project-relative library remains the fallback.
-- Manage personal tags in a separate catalog, with preview-by-default edits, backups, and guarded pruning.
-- Tag bookmarks during capture, report personal tags through opt-in lookup/audit output (including JSON), and display tags on offline index cards.
+- Save titles, channels, descriptions, chapters, dates, source tags, historical counts, and thumbnails in self-contained HTML pages.
+- Search the offline index by title, channel, description, video ID, or personal tags; filter channels and sort by upload date, title, or channel.
+- Prevent duplicate captures by video ID, recognize renamed bookmarks through embedded metadata, and refresh existing bookmarks at their original paths.
+- Manage personal tags in a separate catalog, add tags during capture, and show searchable tag badges on index cards.
+- Audit identities and duplicates without changing files, with optional personal-tag and JSON reports.
+- Upgrade saved bookmark pages offline, using previews and backups, and keep your library outside the source repository.
 
-**Limitations:** Videx does not save video playback or transcripts. Original video links may become unavailable. Playlist importing, index tag filtering and collections are **planned**; basic personal catalog tagging is implemented. Capturing or refreshing a bookmark requires internet access; browsing, indexing, upgrading and auditing existing bookmarks work offline.
+Playlist importing, collections, and dedicated index tag filtering remain future work. Personal tagging and tag searching are implemented; see the [development history and roadmap](docs/DEVELOPMENT.md#future-roadmap) for context.
 
 ## Requirements
 
-- **Python 3** (required; see the tested runtime notes below)
-- **yt-dlp** (required for capturing or refreshing bookmarks; installed separately and available on `PATH`)
-- **Bash** and common POSIX command-line utilities (`find`, `sed`, `mktemp`)
-- **Pillow** (optional Python package): reduces embedded thumbnail sizes in the generated index; without it, original thumbnails are used.
-- macOS or Linux; no Node.js, database, web server or `jq` required.
+- **Python 3**, **Bash**, and common POSIX utilities (`find`, `sed`, `mktemp`).
+- **yt-dlp**, installed separately and available on `PATH`, for capture and refresh.
+- **Pillow**, optionally, to reduce embedded index thumbnail sizes; otherwise original thumbnails are used.
+- macOS or Linux; no Node.js, database, web server, or `jq` required. Linux is an intended platform; see the [recorded runtime validation](docs/DEVELOPMENT.md#testing-and-recorded-runtime-validation) for tested environments. No minimum Python version beyond Python 3 has been qualified.
 
-Install yt-dlp using its [official installation instructions](https://github.com/yt-dlp/yt-dlp/wiki/Installation), your system package manager, or `python3 -m pip install -U yt-dlp` in a suitable Python environment. Check dependencies with `yt-dlp --version`, `python3 --version`, and `bash --version`. yt-dlp evolves as video sites change; update it if extraction stops working.
-
-**Runtime validation for v0.3.0:** the offline suite and synthetic capture workflows were tested on macOS (Apple Silicon) with CPython **3.15.2** and Apple **Bash 3.2.57**, including captures without tags. Other Python/Bash versions and Linux have not been exercised in this release-validation pass; Linux remains an intended platform, not a separately verified result. No minimum Python version beyond Python 3 has been qualified by a version matrix. Browser rendering and live yt-dlp extraction are separate checks; the offline capture tests use local extractor stubs.
-
-From the repository root, run the complete offline regression suite with:
-
-```bash
-python3 -B -m unittest discover -s tests -v
-```
-
-Tests use disposable synthetic libraries, never your configured library. The `-B` option suppresses bytecode output. No network, yt-dlp installation, browser, or additional test framework is required.
+Install yt-dlp using its [official instructions](https://github.com/yt-dlp/yt-dlp/wiki/Installation), your package manager, or `python3 -m pip install -U yt-dlp` in a suitable Python environment. Check `yt-dlp --version`, `python3 --version`, and `bash --version`. Update yt-dlp if site changes break extraction.
 
 ## Quick start
 
-Clone this repository, then from its root run:
-
-```bash
-# View capture options
-bash scripts/yt-bookmark.sh --help
-
-# Save a bookmark and update the library index in one command
-bash scripts/yt-bookmark.sh --re-index 'https://www.youtube.com/watch?v=VIDEO_ID'
-```
-
-Open the generated `index.html` in your browser. Bookmarks are created under `<library>/bookmarks/<channel>/<title> [video-id].html`. The `bookmarks/` folder is created automatically when saving the first video. No server is needed.
-
-Without `--re-index`, bookmark capture does **not** rebuild the index. You can rebuild it separately at any time:
-
-```bash
-python3 -B scripts/yt-bookmark-index.py
-```
-
-Index generation writes a unique temporary file beside `index.html`, then atomically replaces the index. Existing regular-file permissions are preserved; new indexes and replaced symlinks use normal creation permissions respecting the process umask, without writing through symlinks. Concurrent builds publish complete files; the last successful replacement wins.
-
-Rebuilding the index excludes every bookmark carrying the reserved personal tag `hidden` (case-insensitive, with surrounding whitespace normalized). Excluded bookmarks contribute no embedded metadata, links, thumbnails, search results, channel listings, or counts. Channels and Single Entries groups are calculated exclusively from visible bookmarks. Other normalized personal tags from the selected library's `catalog.json` appear as wrapping badges on bookmark cards and are searchable through the existing search bar. Each tag supports case-insensitive partial matches. Dedicated tag filtering remains future work. Missing catalogs or tag records produce no tag row; orphan records are ignored. Generated indexes remain self-contained offline.
-
-Regenerate the index after changes to its search functionality or catalog tags; an existing `index.html` contains a snapshot of both the search code and tag data. No network connection is needed to rebuild or search the index.
-
-Rebuild the index after adding or removing `hidden` to apply visibility changes. When valid bookmarks exist but all are hidden, rebuilding succeeds and replaces any older index with an empty-state index. A genuinely empty library or one containing no valid bookmarks retains exit status `1` and leaves any existing index untouched. Malformed, unreadable, symlinked, or non-regular catalogs cause exit status `2` before index writing, even when no valid bookmarks exist, leaving any existing index and its permissions untouched.
-
-`hidden` is an organizational visibility control, not a security feature. Bookmark files, directories, catalog records, and CLI lookup/tag reports remain unchanged and accessible. Older index copies can still contain previously visible bookmarks, and failed rebuilds leave the existing index intact.
-
-Bookmark inspection never reads discovered file symlinks, dangling symlinks, FIFOs, sockets, devices, or other non-regular bookmark objects, and never descends through discovered directory symlinks. Collection roots must be real directories. Real subdirectories named `index.html` are traversed; generated index files are excluded case-insensitively, while bookmark candidates retain case-sensitive `.html` matching. Unrelated ordinary non-HTML files are ignored.
-
-Index builds return `2` without replacing the existing index when filesystem inspection fails, including unreadable files, unavailable subdirectories, disappearing files, or unsupported objects. Malformed or conflicting regular HTML pages are still warned about and skipped; a build with other valid pages can succeed. Explicit library aliases remain supported when they select a library with a real `bookmarks/` directory. Legacy layouts without a `bookmarks` entry remain supported; an existing unsupported entry is an error, not a reason to fall back to scanning another directory. These checks do not provide a snapshot against concurrent filesystem changes.
-
-### Bookmark management
-
-```bash
-# Save a bookmark without rebuilding the index
-bash scripts/yt-bookmark.sh 'https://youtu.be/VIDEO_ID'
-
-# Save into another library and rebuild its index
-bash scripts/yt-bookmark.sh --output '/path/to/library' --re-index 'https://youtu.be/VIDEO_ID'
-
-# Refresh an existing bookmark in place, preserving its path
-bash scripts/yt-bookmark.sh --overwrite 'https://youtu.be/VIDEO_ID'
-
-# Refresh a bookmark and rebuild the index afterward
-bash scripts/yt-bookmark.sh --overwrite --re-index 'https://youtu.be/VIDEO_ID'
-
-# Rebuild the index of another library without capturing a bookmark
-python3 -B scripts/yt-bookmark-index.py '/path/to/library'
-```
-
-Capture accepts repeated `--tag` options. New bookmarks receive their requested tags automatically in `catalog.json`; existing bookmarks preview tag changes unless `--apply` is supplied. `--overwrite` independently refreshes the bookmark HTML; `--apply` controls existing-bookmark tag changes only.
-
-Capture consumes the argument after each `--tag` literally, including `--apply`, `--help`, `--app`, `-topic`, and `--unknown=value`. For example, `--tag Research --tag --apply` previews both tags on an existing bookmark; add a separate standalone `--apply` to save them. A tag named `--apply` never enables writes by itself.
-
-```bash
-# New bookmark: save both tags automatically; existing bookmark: preview additions
-bash scripts/yt-bookmark.sh --tag Python --tag Research 'https://youtu.be/AAAAAAAAAAA'
-
-# Existing bookmark: apply tag additions without refreshing its HTML
-bash scripts/yt-bookmark.sh --tag Research --apply 'https://youtu.be/AAAAAAAAAAA'
-
-# Refresh existing HTML and apply requested tag additions
-bash scripts/yt-bookmark.sh --overwrite --tag Research --apply 'https://youtu.be/AAAAAAAAAAA'
-```
-
-Requested tags use the tag utility's normalization and validation: whitespace is collapsed, duplicates are compared case-insensitively, and normalized tags must be nonempty, at most 80 characters, and free of control characters. Tagged capture validates tags and catalog state before extraction and rechecks the catalog before a bookmark write. Invalid inputs leave existing bookmarks/catalogs unchanged. Untagged capture does not read the catalog unless `--re-index` is requested.
-
-Videx identifies existing bookmarks by **video ID**, rather than their title or channel directory. An existing ID is skipped by default; adding `--re-index` still rebuilds the index after a skip. With `--overwrite`, Videx refreshes the matching HTML file at its existing path instead of creating a renamed copy. If multiple matches are found, Videx refuses to choose one automatically.
-
-Video IDs are case-sensitive 11-character strings containing letters, digits, `_` or `-`. A filename ID must agree with embedded metadata. Renamed bookmarks use their metadata ID; legacy filename-only bookmarks remain supported by lookup and tagging only when the metadata element is absent. Present but malformed metadata never falls back to the filename. Lookup and catalog changes refuse conflicting, ambiguous, or incomplete inventories (status `2`); capture stops on lookup failure and validates the extractor's unchanged ID before writing. Indexing and offline upgrades warn and skip damaged or conflicting pages, including legacy pages lacking the metadata they require. Audit reports conflicts separately from resolved IDs. No identity is automatically repaired.
-
-IDs beginning with one or two hyphens are valid. Capture uses its existing two-argument syntax, for example `bash scripts/yt-bookmark.sh --id '-AAAAAAAAAA'`; it does not accept `--id=VALUE`. Direct lookup uses the equals form for these IDs: `python3 -B scripts/yt-bookmark-find.py '/path/to/library' --id=-AAAAAAAAAA`. Quoting a separate lookup argument does not prevent option interpretation; `--id -- VALUE` is not a substitute for the equals form.
-
-Capture also checks the entire bookmark inventory before extraction and again before writing, rejecting duplicate IDs anywhere in the collection under the same rules as catalog mutations. Embedded and incoming metadata JSON reject repeated `id` keys even when their values match; other repeated keys retain their existing last-value behavior.
-
-The `--output` argument always specifies a **library root**, not its `bookmarks/` subdirectory. The library's bookmarks live under `<library>/bookmarks/`, and its index is `<library>/index.html`.
-
-### Personal catalog management
-
-`yt-bookmark-tag.py` supports `add`, `remove`, `set`, `rename`, `list`, `report`, and `prune`. Editing operations preview changes by default; repeat with `--apply` to save. Applied changes back up an existing catalog before replacement. Examples below use the configured library (or project-local fallback):
-
-```bash
-python3 -B scripts/yt-bookmark-tag.py add AAAAAAAAAAA Python Research
-python3 -B scripts/yt-bookmark-tag.py add AAAAAAAAAAA Python Research --apply
-python3 -B scripts/yt-bookmark-tag.py remove AAAAAAAAAAA Research
-python3 -B scripts/yt-bookmark-tag.py set AAAAAAAAAAA Reference
-python3 -B scripts/yt-bookmark-tag.py rename Reference Research
-python3 -B scripts/yt-bookmark-tag.py list AAAAAAAAAAA
-python3 -B scripts/yt-bookmark-tag.py report
-python3 -B scripts/yt-bookmark-tag.py prune
-```
-
-`remove` removes the requested tags; `set` replaces all personal tags for that video (with no tag arguments, it previews clearing them). `rename` previews replacement across matching library bookmarks. `list` and `report` are read-only. `prune` previews removal of catalog entries without matching bookmarks and refuses incomplete inventories; it never deletes bookmark HTML. None of these commands rebuilds the index automatically.
-
-`list` is a catalog-only query after library-directory, catalog, and ID validation: it does not scan or read bookmarks, and can show a catalog record even when that bookmark is damaged or absent. `report` counts successfully inspected unique video IDs, includes hidden bookmarks, and identifies duplicate-ID groups separately. A complete, clean report returns `0`; partial inspection or duplicate-ID findings return `1`; invalid arguments, unavailable roots, or invalid catalogs return `2`.
-
-Partial reports label their totals `Inspected unique IDs (partial)` and unmatched records `Unverified catalog entries`. Those records are not confirmed orphans: an unreadable file or uninspected subtree may contain a match. Only complete inspection uses `Catalog entries without matching bookmarks`. Confirmed orphan records alone do not make a complete report fail. Reporting never creates or modifies catalogs, backups, or publication staging files. All mutation previews and applied mutations still require a complete, validated inventory without duplicate IDs.
-
-Every tag operation validates the catalog, including previews and no-op requests. Existing catalogs must be regular files; symlinks (including dangling links), directories, and special files are rejected without reading their contents. Tag arrays in all records, including unrelated records and orphans, must contain only strings. These validation failures produce an error and exit status `2`, leaving catalog paths, targets, and existing backups unchanged without creating backups or temporary publication files. Missing catalogs remain supported.
-
-When a tag operation changes a video's record, its tags are saved alphabetically, case-insensitively, preserving display capitalization and case-insensitive deduplication (`hidden` retains its lowercase normalization and sorts normally). This also applies to capture-time tagging. Unrelated records and no-op requests do not have their tags reordered.
-
-Place an explicit library root before the operation to override configuration:
-
-```bash
-python3 -B scripts/yt-bookmark-tag.py '/path/to/library' add AAAAAAAAAAA Research --apply
-```
-
-For hyphen-prefixed IDs or option-like tags, put genuine options first, then `--`, then **all** positional arguments, including an explicit library root:
-
-```bash
-# Preview: --apply and --help below are literal tags
-python3 -B scripts/yt-bookmark-tag.py -- '/path/to/library' add -AAAAAAAAAA Research --apply --help
-
-# Save those tags: the genuine write flag is before the separator
-python3 -B scripts/yt-bookmark-tag.py --apply -- '/path/to/library' add -AAAAAAAAAA Research --apply --help
-```
-
-Use the same ordering for `remove`, `set`, `list`, and option-like `rename` values. Do not append the write flag after `--`, where it is data. Keeping options before all positional arguments also avoids Python-version differences when argparse handles options mixed with a variable-length positional list. The existing configured-library shorthand remains supported for ordinary arguments; the examples above use an explicit library so no shorthand parsing change is needed.
-
-### Library integrity audit
-
-Use the standalone helper to inspect an existing library without modifying its files:
-
-```bash
-# Audit the project library
-python3 -B scripts/yt-bookmark-find.py . --audit
-
-# Audit a separate library
-python3 -B scripts/yt-bookmark-find.py '/path/to/library' --audit
-```
-
-The audit scans the selected library's `bookmarks/` tree and reports:
-
-- **DUPLICATE:** more than one bookmark with the same video ID.
-- **MISMATCH:** a video ID in the filename disagrees with its embedded metadata.
-- **UNKNOWN:** no valid video ID can be identified.
-- **UNREADABLE:** a file cannot be read or its metadata cannot be parsed.
-
-It summarizes scanned files, unique video IDs, duplicate groups, extra copies and other findings. A clean audit exits with status `0`; detected issues return `1`; invalid arguments or a missing bookmarks directory return `2`. **The audit is read-only**: it does not rename, delete or repair files.
-
-### Personal tags in lookup and audit reports
-
-Add `--show-tags` to include personal tags from the selected library's `catalog.json`. Without this flag, lookup still prints only the matching path and never reads the catalog. The existing `yt-bookmark-tag.py report` command remains available.
-
-```bash
-python3 -B scripts/yt-bookmark-find.py '/path/to/library' --id AAAAAAAAAAA --show-tags
-python3 -B scripts/yt-bookmark-find.py '/path/to/library' --id=-AAAAAAAAAA --show-tags --json
-python3 -B scripts/yt-bookmark-find.py '/path/to/library' --audit --show-tags
-python3 -B scripts/yt-bookmark-find.py '/path/to/library' --audit --show-tags --json
-```
-
-Human lookup reports show `Bookmark:`, `Video ID:`, and `Tags: ["Python", "Research"]`. Human audit reports retain identity findings and append personal tags, grouping duplicate paths under their resolved ID. Conflicting identities are never assigned tags, and `hidden` does not filter results.
-
-`--json` requires `--show-tags` and emits one JSON document with `report_version: 1`, `operation`, `library`, `catalog.status`, `bookmarks` (`id`, absolute `paths`, `tags`), `issues`, and `exit_status`. Audit JSON also includes `summary` counts. Catalog status is `present`, `missing`, `unavailable`, or `not_read`. Missing catalogs/records yield empty tag lists and are never created. Tag whitespace, case-insensitive deduplication, and `hidden` normalization match the tag utility; catalog contents are not changed.
-
-Malformed, unreadable, symlinked, or non-regular catalogs produce status `2`. JSON retains any audit findings, includes a `CATALOG_ERROR` issue, and represents unavailable tags as `null`, not `[]`; human reports explain the error on stderr. Lookup failures (`1` not found, `2` unsafe/invalid, `3` URL needs extraction) do not read the catalog. Default lookup/audit behavior and exit codes remain unchanged. Argument syntax errors still use normal argparse diagnostics.
-
-### Offline bookmark upgrades
-
-```bash
-# Inspect possible upgrades without changing files
-python3 -B scripts/yt-bookmark-upgrade.py
-
-# Apply upgrades; originals are copied to a timestamped sibling backup folder
-python3 -B scripts/yt-bookmark-upgrade.py --apply
-
-# Rebuild the index after upgrading
-python3 -B scripts/yt-bookmark-index.py
-```
-
-The upgrade tool works entirely offline. Inspect its dry-run output before applying changes and retain backups until you verify the results. Index generation requires at least one valid bookmark.
-
-Upgrade validates bookmark filesystem access before creating backups or replacing pages. Unsupported objects, enumeration/stat failures, unreadable files, and disappearing files return `2` without changes. Malformed regular pages retain the existing warning-and-skip behavior, including the current mixed-result exit behavior. All candidate originals are still backed up before any replacement. The lower-level generator likewise rejects existing non-regular bookmark destinations with controlled status `2`, without reading them or staging output; new destinations and matching regular-file refreshes remain supported.
-
-## Separate library configuration
-
-Videx source code and personal bookmark data can live in different folders. Copy `config.example.json` to `config.local.json` in the project root, then edit it:
+Clone this repository and work from its root. Before capturing, choose your library location. Copy `config.example.json` to `config.local.json` and edit it, for example:
 
 ```json
 {
@@ -247,88 +55,75 @@ Videx source code and personal bookmark data can live in different folders. Copy
 }
 ```
 
-`config.local.json` is ignored by Git. The `library` value must be an absolute path or begin with `~/`, and must point to the **library root**, not `bookmarks/`. When the file is absent, Videx falls back to its original project-local library. An invalid configuration fails with an error instead of silently selecting another location. Explicit paths still override the configured default.
-
-Commands with a configured default:
-
-```bash
-bash scripts/yt-bookmark.sh --re-index 'https://youtu.be/VIDEO_ID'
-python3 -B scripts/yt-bookmark-index.py
-python3 -B scripts/yt-bookmark-find.py --audit
-python3 -B scripts/yt-bookmark-tag.py report
-python3 -B scripts/yt-bookmark-upgrade.py
-```
-
-The tag tool also accepts its original `LIBRARY OPERATION ...` syntax; `yt-bookmark.sh --output DIR` and positional directory arguments on the other utilities continue to override the default. The generator and metadata helper accept explicit file arguments and need no configuration.
-
-`python3 -B scripts/yt-bookmark-tag.py prune` previews catalog entries without matching bookmarks; add `--apply` to remove them, backing up the catalog first. Both modes refuse with status `2` if the `bookmarks/` inventory is incomplete: unreadable files or directories, malformed metadata, unidentified bookmarks, or symbolic links. Generated `index.html` files are excluded. Resolve the reported paths before retrying; refusal leaves the catalog and backups untouched.
-
-### Moving an existing collection
-
-1. Back up your current library before moving anything. Quit any programs editing the files.
-2. Create a directory for your external library, such as `~/Documents/Video Bookmarks/`. Move **the entire `bookmarks/` directory**, `catalog.json`, any `catalog.json.bak-*` files, and `index.html` from the project root into it. Do not move scripts or Git files.
-3. Update `config.local.json` to point to your chosen library root.
-4. Verify `python3 -B scripts/yt-bookmark-find.py --audit`, then regenerate with `python3 -B scripts/yt-bookmark-index.py`. Open the new `index.html` and test an existing bookmark's Back to Library link.
-5. Only after verification, remove obsolete project-local generated index or bookmark copies. Keep your backup until you are satisfied. Do not keep two active libraries with the same bookmarks.
-
-**Important:** The `--output` flag on the capture script creates the target library directory if needed. Check the configured path carefully before your first capture. The offline index and audit commands will not create missing bookmark directories.
-
-## Project layout
+This local configuration is ignored by Git. Use an absolute path or one beginning with `~/`, pointing to the **library root**, not its `bookmarks/` subdirectory. Without configuration, Videx uses the project root; invalid configuration fails rather than silently choosing another location. Explicit command paths override the configured default.
 
 ```text
-videx/
-├── scripts/
-│   ├── yt-bookmark.sh            # Capture bookmarks and optionally rebuild the index
-│   ├── yt-bookmark-find.py       # Video-ID lookup and read-only library audit
-│   ├── yt-bookmark-tag.py        # Personal catalog management and tag reports
-│   ├── yt-bookmark-generate.py   # Render standalone HTML
-│   ├── yt-bookmark-metadata.py   # Curate stable metadata (schema v2)
-│   ├── yt-bookmark-index.py      # Generate searchable offline index
-│   ├── yt-bookmark-upgrade.py    # Offline migration and backups
-│   ├── videx_config.py          # Configured/default library resolution
-│   ├── videx_identity.py        # Shared identity and metadata JSON validation
-│   └── videx_inventory.py       # Shared bookmark enumeration and checked reading
-├── tests/                       # Offline regressions with synthetic fixtures
-├── config.example.json          # Sample library path (tracked)
-├── config.local.json            # Personal default library path (Git-ignored)
-└── .gitignore
+<library>/
+├── bookmarks/    # Standalone saved HTML bookmarks
+├── catalog.json # Personal catalog data, created when needed
+└── index.html   # Generated offline index
 ```
 
-Individual bookmarks remain readable on their own. Their embedded thumbnail and curated metadata do not require a network connection; external links do. The back-to-library link assumes the bookmark remains in the indexed archive tree.
+View capture options, then save a bookmark and rebuild the index. Replace `AAAAAAAAAAA` with a real 11-character video ID:
 
-The generator accepts explicit metadata, thumbnail, and output paths as a lower-level tool. Metadata curation, configuration resolution, and identity validation are supporting helpers; normal workflows use the capture, find, tag, index, and upgrade commands above.
+```bash
+bash scripts/yt-bookmark.sh --help
+bash scripts/yt-bookmark.sh --re-index 'https://www.youtube.com/watch?v=AAAAAAAAAAA'
+```
 
-## Bookmark storage and backups
+Open `<library>/index.html` in your browser; no server is needed. Capture creates `bookmarks/` automatically and saves new pages under `<library>/bookmarks/<channel>/<title> [video-id].html`. The catalog is separate from embedded source metadata; rebuilding the index reads saved data without recapturing it.
 
-Videx stores bookmarks locally as standalone HTML files in the selected library’s `bookmarks/` directory. The generated `index.html` provides an offline-searchable interface to your collection.
+## Essential commands
 
-These files are excluded from Git tracking by default. Your bookmark collection is independent of the Videx source code, so be sure to back it up separately. Duplicate detection and auditing do not replace backups.
+These examples use the configured library or project-local fallback. Tag edits require an existing bookmark with the indicated ID. Full options, explicit-path examples, and unusual argument syntax are in [Usage](docs/USAGE.md).
 
-## Project history and roadmap
+```bash
+# Capture without rebuilding the index
+bash scripts/yt-bookmark.sh 'https://youtu.be/AAAAAAAAAAA'
 
-**Origin:** A simple local alternative to YouTube's bookmark/playlist front end. The first iteration generated a self-contained HTML page for each saved video.
+# Refresh an existing bookmark and rebuild the index
+bash scripts/yt-bookmark.sh --overwrite --re-index 'https://youtu.be/AAAAAAAAAAA'
 
-**Current state (v0.3.0):** A small suite of scripts with channel-organized bookmarks, curated metadata, a separate personal-tag catalog, capture tagging, opt-in text/JSON tag reports, and catalog-aware offline index cards. Identity checks, duplicate prevention, in-place refreshes, offline upgrades, previews and backups preserve existing formats. The original `yt-bookmark-*` script names are retained intentionally.
+# Rebuild the index independently, offline
+python3 -B scripts/yt-bookmark-index.py
 
-### v0.3.0 release notes
+# New bookmark: tags save automatically; existing bookmark: preview additions
+bash scripts/yt-bookmark.sh --tag Python --tag Research 'https://youtu.be/AAAAAAAAAAA'
 
-These historical notes describe v0.3.0 at release; see the current features above for subsequent index search and visibility behavior.
+# Preview, then apply personal tags to an existing bookmark
+python3 -B scripts/yt-bookmark-tag.py add AAAAAAAAAAA Python Research
+python3 -B scripts/yt-bookmark-tag.py add AAAAAAAAAAA Python Research --apply
 
-- Added personal catalog management and repeatable capture tags, with preview/apply behavior for existing bookmarks.
-- Added opt-in lookup/audit tag reports and JSON output without changing unflagged lookup output.
-- Added normalized personal-tag badges to the self-contained offline index. Tags are display-only; `hidden` is not excluded.
-- Hardened bookmark identity validation, repeated JSON `id` detection, inventory traversal, pruning, and atomic index publication.
-- Capture now rejects invalid requested tags or applicable catalog state before bookmark writes, including refreshes. Untagged capture is covered on Apple Bash 3.2.57.
+# Inspect tag totals and audit the library without modifying it
+python3 -B scripts/yt-bookmark-tag.py report
+python3 -B scripts/yt-bookmark-find.py --audit
 
-Compatibility: catalog schema **1**, bookmark metadata schema **2**, and JSON report version **1** are unchanged. No automatic library migration or recapture is required. Legacy filename-only bookmarks remain usable for lookup/tagging; indexing/upgrading still require embedded metadata. Rebuild the index explicitly to display catalog tags.
+# Preview offline upgrades, then apply with backups
+python3 -B scripts/yt-bookmark-upgrade.py
+python3 -B scripts/yt-bookmark-upgrade.py --apply
 
-**Future work (not included in v0.3.0):**
+# Rebuild after upgrades or applied tag changes
+python3 -B scripts/yt-bookmark-index.py
+```
 
-1. Import all accessible entries from a YouTube playlist as individual bookmarks, using the existing video-ID checks to skip duplicates and reporting failures.
-2. Collections for curated browsing, with bookmarks belonging to multiple collections.
-3. Dedicated personal-tag filtering and visual collection browsing in the index.
+The tag tool also supports removing, replacing, and renaming tags, catalog-only listing, and previewing orphan-record pruning. Audit reports duplicates, mismatches, unknown identities, and unreadable files; it does not repair them. Inspect warnings before applying maintenance operations.
 
-Longer-term possibilities include better batch management and a unified `videx` command, if the existing tools become cumbersome. These are ideas, not commitments.
+## Important usage cautions
+
+- **Internet:** Capture and refresh need internet access. Browsing, indexing, tagging, auditing, and upgrades work offline; external video links still require a connection.
+- **Destination:** Capture `--output DIR` selects a library root and can create directories. Check the configured or explicit path before your first capture. Index and audit commands do not create missing bookmark directories.
+- **Existing bookmarks:** Existing IDs are skipped by default, even after title/channel changes. `--overwrite` refreshes HTML at its existing path; ambiguous matches are refused.
+- **Preview versus writes:** Catalog edits and upgrades preview by default; `--apply` saves those changes. Capture writes new bookmarks and automatically saves their requested tags. For existing capture tags, `--apply` controls tag edits independently of HTML refresh with `--overwrite`.
+- **Index updates:** Capture rebuilds only with `--re-index`, including after a skip. Rebuild explicitly after upgrades, applied catalog/visibility changes, or index search-code updates. Tag commands never rebuild automatically.
+- **Visibility:** The normalized personal tag `hidden` excludes a bookmark from the rebuilt index, not from files, catalogs, or CLI reports. It is no security feature. Older copies may contain hidden entries; failed rebuilds retain the existing index.
+- **Backups:** Back up your library independently of the source repository. Generated library files are ignored by Git by default. Duplicate checks and audits do not replace backups; retain upgrade/catalog backups until verified.
+
+## Documentation
+
+- [Usage](docs/USAGE.md) — Detailed commands, configuration, tag workflows, reports, moving libraries, and troubleshooting.
+- [Development](docs/DEVELOPMENT.md) — Architecture, modules, testing, runtime validation, history, historical release notes, and roadmap.
+- [Data formats](docs/DATA_FORMATS.md) — Library layout, metadata, catalog and report schemas, identity, normalization, and compatibility.
+- [Safety](docs/SAFETY.md) — Filesystem checks, validation, backups, publication, failure statuses, and concurrency limits.
 
 ## License
 
