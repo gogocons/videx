@@ -44,17 +44,21 @@ Normal user workflows use capture, find, tag, index, and upgrade. See [data form
 
 ## Testing and recorded runtime validation
 
-**Runtime validation for v0.3.0:** the offline suite and synthetic capture workflows were tested on macOS (Apple Silicon) with CPython **3.15.2** and Apple **Bash 3.2.57**, including captures without tags. Other Python/Bash versions and Linux have not been exercised in this release-validation pass; Linux remains an intended platform, not a separately verified result. No minimum Python version beyond Python 3 has been qualified by a version matrix. Browser rendering and live yt-dlp extraction are separate checks; the offline capture tests use local extractor stubs.
+**Runtime validation for v0.4.0:** on macOS (Apple Silicon), the full offline suite ran with CPython **3.15.2** and **3.14.2**: **169 tests per runtime, 168 passed and 1 skipped**, with no failures. The skipped Unix-socket test could not bind a socket in the sandbox; actual FIFO/symlink and mocked special-file checks ran. The isolated F4 staged snapshot also passed all 153 of its tests outside the sandbox, including the real Unix-socket test. Apple **Bash 3.2.57** syntax and capture workflows (using local extractor stubs) were checked.
+
+A short Firefox **160.0** headless smoke test used an offline temporary profile and synthetic files. It checked standalone bookmark display and embedded thumbnails, index rendering, personal-tag searching, `hidden` exclusion, and all-hidden empty-index rendering. This is a limited smoke test, not a browser compatibility matrix. Linux and live yt-dlp extraction have not been validated for this release. No minimum Python version beyond Python 3 has been qualified by a broader version matrix.
 
 From the repository root, run the complete offline regression suite with:
 
 ```bash
 python3 -B -m unittest discover -s tests -v
+python3.14 -B -m unittest discover -s tests -v
+bash -n scripts/yt-bookmark.sh
 ```
 
-Tests use disposable synthetic libraries, never your configured library. The `-B` option suppresses bytecode output. No network, yt-dlp installation, browser, or additional test framework is required.
+Tests use disposable synthetic libraries, never your configured library. The `-B` option suppresses bytecode output. No network, yt-dlp installation, browser, or additional test framework is required. Optional Deno or Node.js enables real JavaScript `JSON.parse()` checks and the index interaction harness; these tests report skips if neither runtime is available. Deno was available and these checks ran for v0.4.0; Node.js was not available. The JavaScript harness does not replace browser rendering checks.
 
-These are recorded release-validation results, not new validation performed for this documentation change. No additional minimum Python version or broader platform matrix is claimed.
+These are recorded local release-preparation results. Sandbox restrictions may affect filesystem tests; report skips separately from passes. No broader platform matrix is claimed.
 
 ## Development guidance
 
@@ -66,11 +70,23 @@ Use disposable synthetic fixtures for regressions; never run development checks 
 
 **Origin:** A simple local alternative to YouTube's bookmark/playlist front end. The first iteration generated a self-contained HTML page for each saved video.
 
-**Current state (v0.3.0):** A small suite of scripts with channel-organized bookmarks, curated metadata, a separate personal-tag catalog, capture tagging, opt-in text/JSON tag reports, and catalog-aware offline index cards. Identity checks, duplicate prevention, in-place refreshes, offline upgrades, previews and backups preserve existing formats. The original `yt-bookmark-*` script names are retained intentionally.
+**Current state (v0.4.0):** A small suite of scripts with channel-organized bookmarks, curated metadata, a separate personal-tag catalog, capture tagging, opt-in text/JSON tag reports, and catalog-aware offline index cards. Identity checks, duplicate prevention, in-place refreshes, offline upgrades, previews and backups preserve existing formats. The original `yt-bookmark-*` script names are retained intentionally.
 
 Current index behavior includes personal-tag searching and `hidden` exclusion. The historical notes below describe the release snapshot; they do not override the [current features](../README.md#current-features) or [current index workflow](USAGE.md#rebuild-and-browse-the-offline-index). Original script names remain intentional.
 
 ## Historical release notes
+
+### v0.4.0 release notes
+
+- Added personal-tag searching and `hidden` exclusion to the offline index; modified catalog tag arrays are stored alphabetically.
+- Fixed capture argument boundaries so option-like tags remain data and valid leading-hyphen video IDs work across capture and lookup.
+- Unified bookmark filesystem inspection: symlinks and special bookmark files are rejected without content reads, and filesystem failures preserve existing index output and prevent upgrade publication.
+- Made tag `list` catalog-only and made partial tag reports distinguish unverified catalog records from confirmed orphans, with explicit completeness and duplicate-ID statuses.
+- Hardened catalog loading against symlink/special-file paths, non-string tag elements, and recursively duplicated JSON object members, preserving invalid data without rewriting it.
+- Added recursive archival-number validation, shared duration/chapter display rules, and strict browser-compatible JSON serialization while preserving identity-oriented lookup behavior.
+- Reorganized documentation into usage, development, data-format, and safety references, with focused offline regressions for these changes.
+
+Compatibility: catalog schema **1**, bookmark metadata schema **2**, and JSON report version **1** remain unchanged. No automatic migration or recapture is required. Rebuild the index to apply current search and visibility behavior. Validation limits are recorded above; existing partial capture and mixed-result upgrade semantics remain documented in [Safety](SAFETY.md).
 
 ### v0.3.0 release notes
 
@@ -86,7 +102,7 @@ Compatibility: catalog schema **1**, bookmark metadata schema **2**, and JSON re
 
 ## Future roadmap
 
-**Future work (not included in v0.3.0):**
+**Future work (not included in v0.4.0):**
 
 1. Import all accessible entries from a YouTube playlist as individual bookmarks, using the existing video-ID checks to skip duplicates and reporting failures.
 2. Collections for curated browsing, with bookmarks belonging to multiple collections.

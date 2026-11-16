@@ -1,7 +1,7 @@
 # Videx
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue)
-![Version](https://img.shields.io/badge/Version-v0.3.0-red)
+![Version](https://img.shields.io/badge/Version-v0.4.0-red)
 ![Python](https://img.shields.io/badge/Python-3-blue)
 ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-lightgrey)
 
