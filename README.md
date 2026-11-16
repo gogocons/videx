@@ -89,6 +89,10 @@ Rebuild the index after adding or removing `hidden` to apply visibility changes.
 
 `hidden` is an organizational visibility control, not a security feature. Bookmark files, directories, catalog records, and CLI lookup/tag reports remain unchanged and accessible. Older index copies can still contain previously visible bookmarks, and failed rebuilds leave the existing index intact.
 
+Bookmark inspection never reads discovered file symlinks, dangling symlinks, FIFOs, sockets, devices, or other non-regular bookmark objects, and never descends through discovered directory symlinks. Collection roots must be real directories. Real subdirectories named `index.html` are traversed; generated index files are excluded case-insensitively, while bookmark candidates retain case-sensitive `.html` matching. Unrelated ordinary non-HTML files are ignored.
+
+Index builds return `2` without replacing the existing index when filesystem inspection fails, including unreadable files, unavailable subdirectories, disappearing files, or unsupported objects. Malformed or conflicting regular HTML pages are still warned about and skipped; a build with other valid pages can succeed. Explicit library aliases remain supported when they select a library with a real `bookmarks/` directory. Legacy layouts without a `bookmarks` entry remain supported; an existing unsupported entry is an error, not a reason to fall back to scanning another directory. These checks do not provide a snapshot against concurrent filesystem changes.
+
 ### Bookmark management
 
 ```bash
@@ -151,6 +155,10 @@ python3 -B scripts/yt-bookmark-tag.py prune
 ```
 
 `remove` removes the requested tags; `set` replaces all personal tags for that video (with no tag arguments, it previews clearing them). `rename` previews replacement across matching library bookmarks. `list` and `report` are read-only. `prune` previews removal of catalog entries without matching bookmarks and refuses incomplete inventories; it never deletes bookmark HTML. None of these commands rebuilds the index automatically.
+
+`list` is a catalog-only query after library-directory, catalog, and ID validation: it does not scan or read bookmarks, and can show a catalog record even when that bookmark is damaged or absent. `report` counts successfully inspected unique video IDs, includes hidden bookmarks, and identifies duplicate-ID groups separately. A complete, clean report returns `0`; partial inspection or duplicate-ID findings return `1`; invalid arguments, unavailable roots, or invalid catalogs return `2`.
+
+Partial reports label their totals `Inspected unique IDs (partial)` and unmatched records `Unverified catalog entries`. Those records are not confirmed orphans: an unreadable file or uninspected subtree may contain a match. Only complete inspection uses `Catalog entries without matching bookmarks`. Confirmed orphan records alone do not make a complete report fail. Reporting never creates or modifies catalogs, backups, or publication staging files. All mutation previews and applied mutations still require a complete, validated inventory without duplicate IDs.
 
 Every tag operation validates the catalog, including previews and no-op requests. Existing catalogs must be regular files; symlinks (including dangling links), directories, and special files are rejected without reading their contents. Tag arrays in all records, including unrelated records and orphans, must contain only strings. These validation failures produce an error and exit status `2`, leaving catalog paths, targets, and existing backups unchanged without creating backups or temporary publication files. Missing catalogs remain supported.
 
@@ -227,6 +235,8 @@ python3 -B scripts/yt-bookmark-index.py
 
 The upgrade tool works entirely offline. Inspect its dry-run output before applying changes and retain backups until you verify the results. Index generation requires at least one valid bookmark.
 
+Upgrade validates bookmark filesystem access before creating backups or replacing pages. Unsupported objects, enumeration/stat failures, unreadable files, and disappearing files return `2` without changes. Malformed regular pages retain the existing warning-and-skip behavior, including the current mixed-result exit behavior. All candidate originals are still backed up before any replacement. The lower-level generator likewise rejects existing non-regular bookmark destinations with controlled status `2`, without reading them or staging output; new destinations and matching regular-file refreshes remain supported.
+
 ## Separate library configuration
 
 Videx source code and personal bookmark data can live in different folders. Copy `config.example.json` to `config.local.json` in the project root, then edit it:
@@ -276,7 +286,8 @@ videx/
 │   ├── yt-bookmark-index.py      # Generate searchable offline index
 │   ├── yt-bookmark-upgrade.py    # Offline migration and backups
 │   ├── videx_config.py          # Configured/default library resolution
-│   └── videx_identity.py        # Shared identity and metadata JSON validation
+│   ├── videx_identity.py        # Shared identity and metadata JSON validation
+│   └── videx_inventory.py       # Shared bookmark enumeration and checked reading
 ├── tests/                       # Offline regressions with synthetic fixtures
 ├── config.example.json          # Sample library path (tracked)
 ├── config.local.json            # Personal default library path (Git-ignored)

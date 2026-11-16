@@ -12,6 +12,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+from test_videx_inventory import snapshot
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
@@ -309,7 +310,8 @@ class PruneTests(unittest.TestCase):
             stack.enter_context(patch.object(Path, 'is_dir', return_value=True))
             stack.enter_context(patch.object(Path, 'is_symlink', return_value=False))
             stack.enter_context(patch.object(Path, 'exists', return_value=True))
-            stack.enter_context(patch.object(Path, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFREG)))
+            stack.enter_context(patch.object(Path, 'lstat', lambda path: SimpleNamespace(
+                st_mode=stat.S_IFDIR if path == collection else stat.S_IFREG)))
             stack.enter_context(patch.object(Path, 'read_text', read_text))
             stack.enter_context(patch.object(tagger.os, 'scandir', side_effect=scandir))
             writer = stack.enter_context(patch.object(tagger, 'write_catalog'))
@@ -362,7 +364,8 @@ class PruneTests(unittest.TestCase):
 
     def test_nonprune_inspection_keeps_warning_and_filename_fallback(self):
         paths = [ROOT / f'Legacy [{A}].html', ROOT / 'broken.html']
-        with patch.object(Path, 'rglob', return_value=iter(paths)), \
+        with patch.object(tagger, 'scan_bookmarks', return_value=(paths, [], True)), \
+                patch.object(Path, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFREG)), \
                 patch.object(Path, 'read_text', side_effect=['<html>Legacy</html>', ValueError('bad')]), \
                 redirect_stderr(io.StringIO()) as warnings:
             ids = tagger.archive_ids(ROOT)
@@ -370,7 +373,7 @@ class PruneTests(unittest.TestCase):
         self.assertIn('WARNING', warnings.getvalue())
 
     def test_root_traversal_failure_is_not_an_empty_inventory(self):
-        with patch.object(Path, 'is_symlink', return_value=False), \
+        with patch.object(Path, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFDIR)), \
                 patch.object(tagger.os, 'scandir', side_effect=PermissionError('cannot enumerate')):
             with self.assertRaisesRegex(ValueError, 'cannot enumerate'):
                 tagger.archive_ids(ROOT, strict=True)
@@ -383,7 +386,7 @@ class PruneTests(unittest.TestCase):
         context = Mock()
         context.__enter__ = Mock(return_value=iter([entry]))
         context.__exit__ = Mock(return_value=False)
-        with patch.object(Path, 'is_symlink', return_value=False), \
+        with patch.object(Path, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFDIR)), \
                 patch.object(tagger.os, 'scandir', return_value=context) as scan:
             with self.assertRaisesRegex(ValueError, 'symbolic links'):
                 tagger.archive_ids(ROOT, strict=True)
@@ -412,7 +415,7 @@ class TagArgumentBoundaryTests(unittest.TestCase):
     def setUp(self):
         fixture = tempfile.TemporaryDirectory(prefix='videx-tag-arguments-')
         self.addCleanup(fixture.cleanup)
-        self.root = Path(fixture.name)
+        self.root = Path(fixture.name).resolve()
         self.collection = self.root / 'bookmarks'
         self.collection.mkdir()
         self.catalog = self.root / 'catalog.json'
@@ -515,6 +518,129 @@ class TagArgumentBoundaryTests(unittest.TestCase):
                                  capture_output=True, timeout=15)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         self.assertEqual(json.loads(self.catalog.read_text())['bookmarks'][A]['tags'], ['Python', 'Research'])
+
+
+class TagReportCompletenessTests(unittest.TestCase):
+    setUp = TagArgumentBoundaryTests.setUp
+    run_cli = TagArgumentBoundaryTests.run_cli
+
+    def seed(self):
+        self.good = self.collection / 'renamed.html'
+        self.good.write_text(bookmark(A))
+        self.catalog.write_text(json.dumps({'version': 1, 'bookmarks': {
+            A: {'tags': ['keep', 'hidden']}, B: {'tags': ['unverified']},
+            'CCCCCCCCCCC': {'tags': ['orphan']}}, 'collections': {}}))
+        self.catalog.chmod(0o640)
+        (self.root / 'catalog.json.bak-existing').write_bytes(b'keep backup')
+
+    def invoke(self, operation, *values):
+        with patch.object(sys, 'argv', ['tag', str(self.root), operation, *values]), \
+                redirect_stdout(io.StringIO()) as stdout, redirect_stderr(io.StringIO()) as stderr:
+            status = tagger.main()
+        return status, stdout.getvalue(), stderr.getvalue()
+
+    def test_list_is_catalog_only_even_with_fifo_and_malformed_bookmarks(self):
+        self.seed()
+        os.mkfifo(self.collection / 'pipe.html')
+        (self.collection / 'broken.html').write_text('{broken')
+        before = snapshot(self.root)
+        with patch.object(tagger, 'inspect_archive', side_effect=AssertionError('must not inspect')), \
+                patch.object(tagger, 'scan_bookmarks', side_effect=AssertionError('must not scan')):
+            self.assertEqual(self.invoke('list', A), (0, 'keep\nhidden\n', ''))
+            self.assertEqual(self.invoke('list', B), (0, 'unverified\n', ''))
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_partial_report_uses_unverified_records_and_read_only_totals(self):
+        self.seed()
+        bad = self.collection / f'Bad [{B}].html'
+        bad.write_text('<script id="youtube-metadata">{broken</script>')
+        for valid in (True, False):
+            if not valid:
+                self.good.unlink()
+            before = snapshot(self.root)
+            result = self.run_cli('report')
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn('PARTIAL:', result.stdout)
+            self.assertIn(f'Inspected unique IDs (partial): {int(valid)}', result.stdout)
+            self.assertIn('Unverified catalog entries', result.stdout)
+            self.assertNotIn('Catalog entries without matching bookmarks', result.stdout)
+            self.assertIn(B, result.stdout)
+            self.assertIn('CCCCCCCCCCC', result.stdout)
+            self.assertIn('inventory is incomplete', result.stderr)
+            if valid:
+                self.assertIn('hidden', result.stdout)
+            self.assertEqual(snapshot(self.root), before)
+        bad.unlink()
+        clean = self.run_cli('report')
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        self.assertIn('Bookmarks: 0', clean.stdout)
+        self.assertIn('Catalog entries without matching bookmarks (3)', clean.stdout)
+
+    def test_duplicates_are_reported_separately_from_incomplete_identities(self):
+        self.seed()
+        (self.collection / f'Legacy [{A}].html').write_text('legacy without metadata')
+        before = snapshot(self.root)
+        duplicate = self.run_cli('report')
+        self.assertEqual(duplicate.returncode, 1, duplicate.stderr)
+        self.assertIn(f'DUPLICATE: {A}', duplicate.stdout)
+        self.assertIn('Bookmarks: 1', duplicate.stdout)
+        self.assertIn('Catalog entries without matching bookmarks (2)', duplicate.stdout)
+        self.assertNotIn('PARTIAL:', duplicate.stdout)
+        self.assertEqual(snapshot(self.root), before)
+        (self.collection / f'Conflict [{B}].html').write_text(bookmark('CCCCCCCCCCC'))
+        before = snapshot(self.root)
+        conflict = self.run_cli('report')
+        self.assertEqual(conflict.returncode, 1, conflict.stderr)
+        self.assertIn(f'DUPLICATE: {A}', conflict.stdout)
+        self.assertIn('Unverified catalog entries (2)', conflict.stdout)
+        self.assertNotIn('Catalog entries without matching bookmarks', conflict.stdout)
+        self.assertIn('filename ID=', conflict.stderr)
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_enumeration_and_read_failures_have_distinct_root_status(self):
+        self.seed()
+        nested = self.collection / 'nested'
+        nested.mkdir()
+        real_scan = tagger.os.scandir
+        for denied in (nested, self.collection):
+            def scan(path):
+                if Path(path) == denied:
+                    raise PermissionError('synthetic enumeration denied')
+                return real_scan(path)
+            before = snapshot(self.root)
+            with patch.object(tagger.os, 'scandir', side_effect=scan):
+                status, stdout, stderr = self.invoke('report')
+            self.assertEqual(status, 2 if denied == self.collection else 1)
+            self.assertIn('synthetic enumeration denied', stderr)
+            if denied == nested:
+                self.assertIn('Unverified catalog entries', stdout)
+            else:
+                self.assertNotIn('Bookmarks:', stdout)
+            self.assertEqual(snapshot(self.root), before)
+        with patch.object(tagger, 'bookmark_identity', side_effect=PermissionError('synthetic read denied')):
+            status, stdout, stderr = self.invoke('report')
+        self.assertEqual(status, 1)
+        self.assertIn('Inspected unique IDs (partial): 0', stdout)
+        self.assertIn('synthetic read denied', stderr)
+        with patch.object(Path, 'resolve', side_effect=PermissionError('synthetic root denied')):
+            status, _, stderr = self.invoke('report')
+        self.assertEqual(status, 2)
+        self.assertIn('synthetic root denied', stderr)
+
+    def test_index_named_directory_is_present_in_reports_and_strict_mutations(self):
+        self.seed()
+        directory = self.collection / 'index.html'
+        directory.mkdir()
+        self.good.rename(directory / self.good.name)
+        before = snapshot(self.root)
+        report = self.run_cli('report')
+        self.assertEqual(report.returncode, 0, report.stderr)
+        self.assertIn('Bookmarks: 1', report.stdout)
+        self.assertIn('Catalog entries without matching bookmarks (2)', report.stdout)
+        preview = self.run_cli('add', A, 'new')
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertIn('1 bookmark(s) to change', preview.stdout)
+        self.assertEqual(snapshot(self.root), before)
 
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@ from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
+from videx_inventory import read_bookmark_text
 
 
 VIDEO_ID = re.compile(r'^[A-Za-z0-9_-]{11}$')
@@ -83,4 +84,4 @@ def resolve_identity(filename, document):
 def bookmark_identity(path):
     """Read and resolve one bookmark, propagating filesystem/encoding failures."""
     path = Path(path)
-    return resolve_identity(path.name, path.read_text(encoding='utf-8'))
+    return resolve_identity(path.name, read_bookmark_text(path))

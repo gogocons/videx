@@ -5,11 +5,14 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from test_videx_inventory import snapshot
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -254,6 +257,159 @@ class ConsumerTests(unittest.TestCase):
                 self.assertEqual(self.invoke(upgrader, self.root, '--apply')[0], 1)
                 self.assertEqual(bad.read_bytes(), original)
                 self.assertEqual(list(self.root.glob('bookmarks-backup-*')), [])
+
+
+class FilesystemConsumerTests(unittest.TestCase):
+    setUp = ConsumerTests.setUp
+    invoke = ConsumerTests.invoke
+
+    def seed(self):
+        self.good = self.collection / f'Good [{A}].html'
+        self.good.write_text(document(A))
+        self.good.chmod(0o640)
+        self.index = self.root / 'index.html'
+        self.index.write_bytes(b'old index sentinel')
+        self.index.chmod(0o640)
+        (self.root / 'catalog.json').write_text(json.dumps({
+            'version': 1, 'bookmarks': {A: {'tags': ['keep']}, B: {'tags': ['unverified']}},
+            'collections': {}}))
+        (self.root / 'catalog.json.bak-existing').write_bytes(b'backup sentinel')
+        backup = self.root / 'bookmarks-backup-existing'
+        backup.mkdir()
+        (backup / 'keep').write_bytes(b'upgrade backup sentinel')
+
+    def cli(self, script, *arguments):
+        return subprocess.run([sys.executable, '-B', str(SCRIPTS / script), *map(str, arguments)],
+                              cwd=self.root, capture_output=True, text=True, timeout=10,
+                              env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+
+    def test_actual_unsupported_objects_never_block_or_publish(self):
+        self.seed()
+        external = self.root / 'external'
+        external.mkdir()
+        secret = external / f'External [{B}].html'
+        secret.write_text(document(B).replace('Synthetic title', 'ExternalSecretSentinel'))
+        info, thumbnail = self.root / 'info.json', self.root / 'thumb.png'
+        info.write_text(json.dumps({'id': A, 'title': 'Synthetic title'}))
+        thumbnail.write_bytes(b'image')
+        bad = self.collection / 'bad.html'
+        for kind in ('file-link', 'directory-link', 'dangling', 'fifo'):
+            with self.subTest(kind=kind):
+                if kind == 'fifo':
+                    os.mkfifo(bad)
+                else:
+                    target = secret if kind == 'file-link' else external if kind == 'directory-link' else self.root / 'absent'
+                    bad.symlink_to(target, target_is_directory=kind == 'directory-link')
+                before = snapshot(self.root)
+                commands = [
+                    ('yt-bookmark-index.py', [self.root], 2),
+                    ('yt-bookmark-upgrade.py', [self.root], 2),
+                    ('yt-bookmark-upgrade.py', [self.root, '--apply'], 2),
+                    ('yt-bookmark-find.py', [self.root, '--id=' + A], 2),
+                    ('yt-bookmark-find.py', [self.root, '--audit', '--show-tags', '--json'], 1),
+                    ('yt-bookmark-tag.py', [self.root, 'list', A], 0),
+                    ('yt-bookmark-tag.py', [self.root, 'report'], 1),
+                    ('yt-bookmark-generate.py', [info, thumbnail, bad], 2),
+                ]
+                for operation in ('add', 'remove', 'set', 'rename', 'prune'):
+                    values = [] if operation == 'prune' else ['keep', 'new'] if operation == 'rename' else [A, 'new']
+                    for apply in ([], ['--apply']):
+                        commands.append(('yt-bookmark-tag.py', [self.root, operation, *values, *apply], 2))
+                for script, arguments, expected in commands:
+                    with self.subTest(script=script, arguments=arguments):
+                        result = self.cli(script, *arguments)
+                        self.assertEqual(result.returncode, expected, result.stderr)
+                        self.assertNotIn('Traceback', result.stderr)
+                        if script == 'yt-bookmark-tag.py' and arguments[-1] == 'report':
+                            self.assertIn('Unverified catalog entries', result.stdout)
+                        self.assertEqual(snapshot(self.root), before)
+                self.assertNotIn(b'ExternalSecretSentinel', self.index.read_bytes())
+                bad.unlink()
+
+    def test_unsupported_collection_entries_never_trigger_legacy_fallback(self):
+        self.seed()
+        saved = self.root / 'saved-bookmarks'
+        self.collection.rename(saved)
+        for kind in ('file', 'link', 'dangling', 'fifo'):
+            if kind == 'file':
+                self.collection.write_text('unsupported entry')
+            elif kind == 'fifo':
+                os.mkfifo(self.collection)
+            else:
+                self.collection.symlink_to(saved if kind == 'link' else self.root / 'missing', target_is_directory=True)
+            before = snapshot(self.root)
+            for script, extra in (('yt-bookmark-index.py', []), ('yt-bookmark-upgrade.py', ['--apply']),
+                                  ('yt-bookmark-tag.py', ['report']), ('yt-bookmark-tag.py', ['list', A])):
+                with self.subTest(kind=kind, script=script, extra=extra):
+                    result = self.cli(script, self.root, *extra)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(snapshot(self.root), before)
+            if kind == 'link':
+                for script in ('yt-bookmark-index.py', 'yt-bookmark-upgrade.py'):
+                    result = self.cli(script, self.collection)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(snapshot(self.root), before)
+            self.collection.unlink()
+
+    def test_late_read_failures_leave_index_and_upgrade_backups_untouched(self):
+        self.seed()
+        later = self.collection / f'Z Later [{B}].html'
+        later.write_text(document(B))
+        for failure in (PermissionError('denied'), FileNotFoundError('disappeared'), UnicodeError('bad encoding')):
+            for module in (indexer, upgrader):
+                real_read = module.read_bookmark_text
+                def read(path):
+                    if path == later:
+                        raise failure
+                    return real_read(path)
+                before = snapshot(self.root)
+                with self.subTest(module=module.__name__, failure=failure), \
+                        patch.object(module, 'read_bookmark_text', side_effect=read), \
+                        patch.object(generator, 'write_atomic') as writer, \
+                        patch.object(indexer, 'write_index_atomic') as index_writer, \
+                        patch.object(upgrader.shutil, 'copy2') as backup:
+                    arguments = [self.root, '--apply'] if module is upgrader else [self.root]
+                    status, _, _ = self.invoke(module, *arguments)
+                    self.assertEqual(status, 2)
+                    writer.assert_not_called()
+                    index_writer.assert_not_called()
+                    backup.assert_not_called()
+                self.assertEqual(snapshot(self.root), before)
+
+    def test_legacy_directory_and_explicit_library_alias_remain_supported(self):
+        self.seed()
+        alias = self.root / 'library-alias'
+        alias.symlink_to(self.root, target_is_directory=True)
+        for selected in (alias, self.collection):
+            result = self.cli('yt-bookmark-index.py', selected)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = self.cli('yt-bookmark-upgrade.py', selected)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        legacy = self.root / 'legacy'
+        legacy.mkdir()
+        (legacy / 'renamed.html').write_text(document(A))
+        for script in ('yt-bookmark-index.py', 'yt-bookmark-upgrade.py'):
+            result = self.cli(script, legacy)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_generator_rejects_destination_types_before_any_content_read(self):
+        directory = self.collection / 'directory.html'
+        directory.mkdir()
+        info, thumbnail = self.root / 'absent-info.json', self.root / 'absent-thumb.png'
+        before = snapshot(self.root)
+        with patch.object(Path, 'read_text', side_effect=AssertionError('must not read')), \
+                patch.object(generator, 'write_atomic') as writer:
+            self.assertEqual(self.invoke(generator, info, thumbnail, directory)[0], 2)
+            writer.assert_not_called()
+        self.assertEqual(snapshot(self.root), before)
+        for mode in (stat.S_IFCHR, stat.S_IFBLK, stat.S_IFSOCK):
+            with self.subTest(mode=mode), \
+                    patch.object(Path, 'lstat', return_value=SimpleNamespace(st_mode=mode)), \
+                    patch.object(Path, 'read_text', side_effect=AssertionError('must not read')), \
+                    patch.object(generator, 'write_atomic') as writer:
+                self.assertEqual(self.invoke(generator, info, thumbnail, directory)[0], 2)
+                writer.assert_not_called()
+        self.assertEqual(snapshot(self.root), before)
 
 
 class CaptureTests(unittest.TestCase):

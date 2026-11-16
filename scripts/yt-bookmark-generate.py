@@ -6,6 +6,7 @@ import html
 import json
 import mimetypes
 import os
+import stat
 from pathlib import Path
 import re
 import tempfile
@@ -159,21 +160,32 @@ def write_atomic(output, content):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = argparse.ArgumentParser(description=__doc__,
+        epilog='Existing bookmark destinations must be regular files; symlinks and special files are rejected with status 2 before reading or staging output.')
     p.add_argument('info_json', type=Path)
     p.add_argument('thumbnail', type=Path)
     p.add_argument('output', type=Path)
     p.add_argument('--back-link', help='Relative path to collection index.html')
     args = p.parse_args()
+    try:
+        previous = args.output.lstat()
+    except FileNotFoundError:
+        previous = None
+    except OSError as exc:
+        p.error(f'Cannot inspect destination: {exc}')
+    if previous is not None and not stat.S_ISREG(previous.st_mode):
+        p.error('Refusing to replace a non-regular bookmark (symlink, directory, or special file)')
     metadata = loads_metadata(args.info_json.read_text(encoding='utf-8'))
     mime = mimetypes.guess_type(args.thumbnail.name)[0] or 'application/octet-stream'
     image_uri = f'data:{mime};base64,' + base64.b64encode(args.thumbnail.read_bytes()).decode('ascii')
     document = make_document(metadata, image_uri, args.back_link)
     video_id = resolve_identity(args.output.name, document)
-    if args.output.exists() or args.output.is_symlink():
-        if args.output.is_symlink():
-            p.error('Refusing to replace a symbolic-link bookmark')
-        if bookmark_identity(args.output) != video_id:
+    if previous is not None:
+        try:
+            existing_id = bookmark_identity(args.output)
+        except (OSError, UnicodeError) as exc:
+            p.error(f'Cannot read existing bookmark: {exc}')
+        if existing_id != video_id:
             p.error('Existing bookmark identity differs from incoming metadata; refusing to replace')
     write_atomic(args.output, document)
     print(f'Generated: {args.output}')

@@ -16,6 +16,7 @@ import sys
 from urllib.parse import quote
 from videx_config import default_library
 from videx_identity import loads_metadata, resolve_identity
+from videx_inventory import read_bookmark_text, scan_bookmarks
 
 try:
     from PIL import Image, ImageOps
@@ -71,7 +72,7 @@ def thumbnail_preview(data_uri, width):
 
 def parse_bookmark(path, root, width, library_root):
     parser = BookmarkParser()
-    source = path.read_text(encoding='utf-8')
+    source = read_bookmark_text(path)
     video_id = resolve_identity(path.name, source)
     parser.feed(source)
     if not parser.metadata_chunks:
@@ -265,7 +266,7 @@ def load_catalog_tags(library_root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
-        epilog='Personal catalog tags are included automatically. Rebuilding excludes bookmarks tagged hidden from index data, search, channels, and counts. This is an organizational visibility control, not a security feature. Invalid catalogs return status 2 and leave the existing index untouched.')
+        epilog='Personal catalog tags are included automatically. Rebuilding excludes bookmarks tagged hidden from index data, search, channels, and counts. This is an organizational visibility control, not a security feature. Invalid catalogs or bookmark filesystem failures return status 2 and leave the existing index untouched. Bookmark symlinks and special files are rejected without reading; malformed regular pages are skipped.')
     parser.add_argument(
     'directory',
     nargs='?',
@@ -275,8 +276,9 @@ def main():
     parser.add_argument('--thumbnail-width', type=int, default=360, help='Embedded preview width in pixels (default: 360)')
     args = parser.parse_args()
     try:
-        selected = Path(args.directory).expanduser().resolve() if args.directory else default_library()
-    except ValueError as exc:
+        requested = Path(args.directory).expanduser() if args.directory else default_library()
+        selected = requested.resolve()
+    except (OSError, ValueError) as exc:
         parser.error(str(exc))
 
     if not selected.is_dir():
@@ -288,7 +290,17 @@ def main():
         library_root = selected.parent
     else:
         library_root = selected
-        root = selected / 'bookmarks' if (selected / 'bookmarks').is_dir() else selected
+        root = selected / 'bookmarks'
+        try:
+            root.lstat()
+        except FileNotFoundError:
+            root = selected
+        except OSError as exc:
+            print(f'ERROR: Cannot inspect {root}: {exc}; existing index left untouched.', file=sys.stderr)
+            return 2
+    if root == selected and requested.is_symlink():
+        print('ERROR: Bookmark collection root cannot be a symlink; existing index left untouched.', file=sys.stderr)
+        return 2
     if args.thumbnail_width < 64 or args.thumbnail_width > 1920:
         parser.error('--thumbnail-width must be between 64 and 1920')
     try:
@@ -298,7 +310,11 @@ def main():
         return 2
     if Image is None:
         print('Note: Pillow not installed; original full-size thumbnails will be embedded. Install Pillow for smaller index files.', file=sys.stderr)
-    paths = sorted(p for p in root.rglob('*.html') if p.is_file() and p.name.lower() != 'index.html')
+    paths, filesystem_issues, _ = scan_bookmarks(root)
+    if filesystem_issues:
+        for path, exc in filesystem_issues:
+            print(f'ERROR: Cannot inspect {path}: {exc}; existing index left untouched.', file=sys.stderr)
+        return 2
     print(f'Scanning {len(paths)} HTML files in {root}', flush=True)
     items = []
     valid_count = 0
@@ -311,7 +327,10 @@ def main():
             if 'hidden' in item['personalTags']:
                 continue
             items.append(item)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeError) as exc:
+            print(f'ERROR: Cannot read {path}: {exc}; existing index left untouched.', file=sys.stderr)
+            return 2
+        except ValueError as exc:
             skipped += 1
             print(f'  Skipping {path.relative_to(root)}: {exc}', file=sys.stderr)
     # All-hidden libraries must replace an older index with an empty one.

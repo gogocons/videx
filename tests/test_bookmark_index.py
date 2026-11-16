@@ -15,6 +15,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+from test_videx_inventory import snapshot
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -695,6 +696,32 @@ console.log(JSON.stringify(results));
         self.assertEqual({path: (path.read_bytes(), path.stat().st_mode) for path in before}, before)
         self.assertEqual(list(self.root.glob('catalog.json.bak-*')), [])
         self.assert_no_staging_files()
+
+    def test_filesystem_failures_do_not_publish_even_with_valid_bookmarks(self):
+        self.bookmark()
+        self.output.write_bytes(b'preserve index')
+        self.output.chmod(0o640)
+        nested = self.collection / 'nested'
+        nested.mkdir()
+        real_scan = os.scandir
+        def scan(path):
+            if Path(path) == nested:
+                raise PermissionError('synthetic enumeration denied')
+            return real_scan(path)
+        before = snapshot(self.root)
+        with patch.object(indexer.os, 'scandir', side_effect=scan), \
+                patch.object(indexer, 'write_index_atomic') as writer:
+            self.assertEqual(self.run_index()[0], 2)
+            writer.assert_not_called()
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_index_named_directory_and_malformed_regular_skip_remain_supported(self):
+        self.bookmark(collection=self.collection / 'index.html')
+        (self.collection / 'bad.html').write_text('malformed regular page')
+        status, stdout, _ = self.run_index()
+        self.assertEqual(status, 0)
+        self.assertIn('Indexed 1 bookmarks (1 skipped)', stdout)
+        self.assertEqual(self.parsed_output()[0]['items'][0]['href'], 'bookmarks/index.html/renamed.html')
 
 
 if __name__ == '__main__':

@@ -12,6 +12,7 @@ import sys
 import tempfile
 from videx_config import default_library
 from videx_identity import VIDEO_ID as ID, IdentityError, bookmark_identity
+from videx_inventory import scan_bookmarks
 
 
 def empty():
@@ -51,54 +52,34 @@ def unique(tags):
     return list(out.values())
 
 
-def archive_ids(root, strict=False):
+def inspect_archive(root):
+    """Retain inspection failures so reports cannot mistake them for absence."""
     ids = defaultdict(list)
-    failures = []
-
-    def inspect_tree(directory):
-        # Unlike rglob, scandir exposes directory enumeration failures.
-        try:
-            with os.scandir(directory) as entries:
-                children = sorted(entries, key=lambda entry: entry.name)
-            for entry in children:
-                path = Path(entry.path)
-                if path.name.lower() == 'index.html':
-                    continue
-                try:
-                    mode = entry.stat(follow_symlinks=False).st_mode
-                    if stat.S_ISLNK(mode):
-                        raise ValueError('symbolic links cannot establish a complete local inventory')
-                    if stat.S_ISDIR(mode):
-                        yield from inspect_tree(path)
-                    elif path.suffix == '.html' and path.name.lower() != 'index.html':
-                        if not stat.S_ISREG(mode):
-                            raise ValueError('bookmark is not a regular file')
-                        yield path
-                except (OSError, ValueError) as exc:
-                    failures.append(f'{path}: {exc}')
-        except OSError as exc:
-            failures.append(f'{directory}: {exc}')
-
-    collection = root / 'bookmarks'
-    if strict and collection.is_symlink():
-        raise ValueError(f'Incomplete bookmark inventory: {collection} is a symbolic link; refusing catalog changes')
-    paths = inspect_tree(collection) if strict else sorted(collection.rglob('*.html'))
+    paths, issues, available = scan_bookmarks(root / 'bookmarks')
     for path in paths:
-        if path.name == 'index.html': continue
         try:
             vid = bookmark_identity(path)
             ids[vid].append(path)
         except (OSError, UnicodeError, ValueError, TypeError) as exc:
             if isinstance(exc, IdentityError) and exc.category == 'MISMATCH':
                 exc = ValueError(f'{exc}; filename ID={exc.filename_id}, metadata ID={exc.metadata_id}')
-            if strict: failures.append(f'{path}: {exc}')
-            else: print(f'WARNING: Cannot inspect {path}: {exc}; inventory is incomplete', file=sys.stderr)
+            issues.append((path, exc))
+    return ids, issues, available
+
+
+def archive_ids(root, strict=False):
+    """Keep the capture-facing strict inventory interface."""
+    ids, issues, _ = inspect_archive(root)
+    failures = [f'{path}: {exc}' for path, exc in issues]
     if strict:
         for vid, paths in ids.items():
             if len(paths) > 1:
                 failures.append(f'Duplicate video ID {vid}: ' + ', '.join(str(path) for path in paths))
-    if failures:
+    if strict and failures:
         raise ValueError('Incomplete bookmark inventory; refusing catalog changes:\n  ' + '\n  '.join(failures))
+    if not strict:
+        for path, exc in issues:
+            print(f'WARNING: Cannot inspect {path}: {exc}; inventory is incomplete', file=sys.stderr)
     return ids
 
 
@@ -119,24 +100,36 @@ def write_catalog(path, obj):
         if tmp and tmp.exists(): tmp.unlink()
 
 
-def report(obj, ids):
+def report(obj, ids, issues=()):
+    complete = not issues
     counts = Counter()
     for vid in ids:
         for tag in unique(obj['bookmarks'].get(vid, {}).get('tags', [])):
             counts[tag] += 1
     print('Videx tag report\n')
+    if not complete:
+        print('PARTIAL: inventory is incomplete; counts cover successfully inspected unique IDs only.')
+        for path, exc in issues:
+            print(f'WARNING: Cannot inspect {path}: {exc}; inventory is incomplete', file=sys.stderr)
     for tag, n in sorted(counts.items(), key=lambda item: (-item[1], item[0].casefold())):
         print(f'{tag:<30} {n:>5}')
     tagged = sum(bool(obj['bookmarks'].get(vid, {}).get('tags')) for vid in ids)
-    print(f'\nBookmarks: {len(ids)} | Tagged: {tagged} | Untagged: {len(ids)-tagged} | Unique tags: {len(counts)}')
+    label = 'Bookmarks' if complete else 'Inspected unique IDs (partial)'
+    print(f'\n{label}: {len(ids)} | Tagged: {tagged} | Untagged: {len(ids)-tagged} | Unique tags: {len(counts)}')
     orphans = sorted(set(obj['bookmarks']) - set(ids))
     if orphans:
-        print(f'\nCatalog entries without matching bookmarks ({len(orphans)}):')
+        label = 'Catalog entries without matching bookmarks' if complete else 'Unverified catalog entries'
+        print(f'\n{label} ({len(orphans)}):')
         for vid in orphans: print(f'  {vid}')
     folded = defaultdict(list)
     for tag in counts: folded[tag.casefold()].append(tag)
     for variants in folded.values():
         if len(variants) > 1: print('CASE VARIANTS:', ', '.join(variants))
+    duplicates = {vid: paths for vid, paths in ids.items() if len(paths) > 1}
+    for vid, paths in sorted(duplicates.items()):
+        print(f'\nDUPLICATE: {vid}')
+        for path in paths: print(f'  {path}')
+    return 1 if issues or duplicates else 0
 
 
 def main():
@@ -144,7 +137,11 @@ def main():
         usage='%(prog)s [LIBRARY] OPERATION [VALUES ...] [--apply]',
         epilog='Start with OPERATION to use the configured default library. Changes are previews unless --apply is supplied. '
                'For hyphen-prefixed IDs or tags, use: [--apply] -- LIBRARY OPERATION VALUES ... . '
-               'All values after -- are literal; put the write option before --.')
+               'All values after -- are literal; put the write option before --. '
+               'Bookmark symlinks and special files are not read. Mutations require a complete inventory. '
+               'list reads only the catalog. report returns 0 when complete and clean, 1 for partial inspection '
+               'or duplicate IDs, and 2 for invalid arguments, roots, or catalogs. Partial reports label unmatched '
+               'records as Unverified catalog entries, not confirmed orphans.')
     parser.add_argument('library', type=Path, help='Library root containing bookmarks/ (omit when starting with an operation)')
     parser.add_argument('operation', choices=['add', 'remove', 'set', 'rename', 'list', 'report', 'prune'])
     parser.add_argument('values', nargs='*', help='For add/remove/set: VIDEO_ID TAG...; rename: OLD NEW; list: VIDEO_ID')
@@ -159,16 +156,23 @@ def main():
         except ValueError as exc:
             parser.error(str(exc))
     args = parser.parse_args(argv)
-    root = args.library.expanduser().resolve()
-    if not (root / 'bookmarks').is_dir(): parser.error(f'Not a library: missing {root / "bookmarks"}')
-    path = root / 'catalog.json'
     try:
+        root = args.library.expanduser().resolve()
+        path = root / 'catalog.json'
+        if not stat.S_ISDIR((root / 'bookmarks').lstat().st_mode):
+            raise ValueError(f'Not a library: {root / "bookmarks"} must be a real directory, not a symlink or special file')
         catalog = load(path)
-        ids = archive_ids(root, strict=args.operation not in ('list', 'report'))
         op, vals = args.operation, args.values
+        if op == 'list':
+            if len(vals) != 1 or not ID.fullmatch(vals[0]): parser.error('list requires VIDEO_ID')
+            print('\n'.join(catalog['bookmarks'].get(vals[0], {}).get('tags', [])) or '(no tags)'); return 0
         if op == 'report':
             if vals: parser.error('report takes no additional arguments')
-            report(catalog, ids); return 0
+            ids, issues, available = inspect_archive(root)
+            if not available:
+                raise ValueError('Cannot inspect bookmark collection:\n  ' + '\n  '.join(f'{p}: {exc}' for p, exc in issues))
+            return report(catalog, ids, issues)
+        ids = archive_ids(root, strict=True)
         if op == 'prune':
             if vals: parser.error('prune takes no additional arguments')
             orphans = sorted(set(catalog['bookmarks']) - set(ids))
@@ -187,9 +191,6 @@ def main():
             else:
                 print('No files modified. Repeat with --apply to save.')
             return 0
-        if op == 'list':
-            if len(vals) != 1 or not ID.fullmatch(vals[0]): parser.error('list requires VIDEO_ID')
-            print('\n'.join(catalog['bookmarks'].get(vals[0], {}).get('tags', [])) or '(no tags)'); return 0
         if op == 'rename':
             if len(vals) != 2: parser.error('rename requires OLD_TAG NEW_TAG')
             old, new = normalized(vals[0]), normalized(vals[1]); targets = list(ids)

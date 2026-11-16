@@ -10,6 +10,7 @@ sys.dont_write_bytecode = True
 import os
 from videx_config import default_library
 from videx_identity import loads_metadata, resolve_identity
+from videx_inventory import read_bookmark_text, scan_bookmarks
 
 from importlib.util import spec_from_file_location, module_from_spec
 
@@ -39,22 +40,34 @@ class ArchiveParser(HTMLParser):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = argparse.ArgumentParser(description=__doc__,
+        epilog='Bookmark symlinks and special files are not read. Filesystem validation failures return 2 before backups or replacements; malformed regular pages are skipped.')
     p.add_argument('directory', nargs='?', default=None,
                    help='Library root or bookmark directory (default: configured library)')
     p.add_argument('--apply', action='store_true', help='Back up and replace pages; default is dry-run')
     args = p.parse_args()
     try:
-        selected = Path(args.directory).expanduser().resolve() if args.directory else default_library()
-    except ValueError as exc:
+        requested = Path(args.directory).expanduser() if args.directory else default_library()
+        selected = requested.resolve()
+    except (OSError, ValueError) as exc:
         p.error(str(exc))
-    root = selected / "bookmarks" if (selected / "bookmarks").is_dir() else selected
-    if not root.is_dir():
-        p.error(f'Not a directory: {root}')
+    root = selected / 'bookmarks'
+    try:
+        root.lstat()
+    except FileNotFoundError:
+        root = selected
+    except OSError as exc:
+        p.error(f'Cannot inspect {root}: {exc}')
+    if root == selected and requested.is_symlink():
+        p.error('Bookmark collection root cannot be a symlink')
+    paths, filesystem_issues, _ = scan_bookmarks(root)
+    if filesystem_issues:
+        for path, exc in filesystem_issues:
+            print(f'ERROR: Cannot inspect {path}: {exc}; no files changed.', file=sys.stderr)
+        return 2
     spec = spec_from_file_location('bookmark_generator', Path(__file__).with_name('yt-bookmark-generate.py'))
     module = module_from_spec(spec)
     spec.loader.exec_module(module)
-    paths = sorted(f for f in root.rglob('*.html') if f.name != 'index.html')
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     backup_root = root.parent / f'{root.name}-backup-{stamp}'
     candidates = []
@@ -65,9 +78,7 @@ def main():
     for path in paths:
         try:
             parser = ArchiveParser()
-            if path.is_symlink():
-                raise ValueError('symbolic-link bookmark cannot be upgraded safely')
-            source = path.read_text(encoding='utf-8')
+            source = read_bookmark_text(path)
             video_id = resolve_identity(path.name, source)
             parser.feed(source)
             if not parser.metadata or not parser.thumbnail:
@@ -87,7 +98,7 @@ def main():
             rebuilt = loads_metadata(''.join(check.metadata))
             if rebuilt.get('id') != metadata['id'] or rebuilt.get('title') != metadata['title'] or check.thumbnail != parser.thumbnail:
                 raise ValueError('rebuilt bookmark validation failed')
-            if document == path.read_text(encoding='utf-8'):
+            if document == source:
                 unchanged += 1
                 continue
             old_size = path.stat().st_size
@@ -95,7 +106,10 @@ def main():
             original_bytes += old_size
             predicted_bytes += new_size
             candidates.append((path, document, old_size, new_size))
-        except (OSError, ValueError) as exc:
+        except (OSError, UnicodeError) as exc:
+            print(f'ERROR: Cannot read {path}: {exc}; no files changed.', file=sys.stderr)
+            return 2
+        except ValueError as exc:
             skipped += 1
             print(f'SKIP {path.relative_to(root)}: {exc}', file=sys.stderr)
     print(f'Found {len(candidates)} bookmarks requiring upgrade; {unchanged} already current; {skipped} skipped.')

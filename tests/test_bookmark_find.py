@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from test_videx_inventory import inventory as bookmark_filesystem
 
 PROJECT = Path(__file__).resolve().parents[1]
 with patch.object(sys, 'path', [str(PROJECT / 'scripts')] + sys.path):
@@ -106,13 +107,13 @@ class FindTests(unittest.TestCase):
         denied = self.collection / 'denied'
         denied.mkdir()
         self.add('valid.html', A)
-        scandir = finder.os.scandir
+        scandir = bookmark_filesystem.os.scandir
         for inaccessible in (denied, self.collection):
             def failing_scan(path):
                 if Path(path) == inaccessible:
                     raise PermissionError('synthetic traversal denied')
                 return scandir(path)
-            with self.subTest(path=inaccessible), patch.object(finder.os, 'scandir', side_effect=failing_scan):
+            with self.subTest(path=inaccessible), patch.object(bookmark_filesystem.os, 'scandir', side_effect=failing_scan):
                 status, stdout, stderr = self.invoke('--id', A)
                 self.assertEqual((status, stdout), (2, ''))
                 self.assertIn('synthetic traversal denied', stderr)
@@ -147,6 +148,22 @@ class FindTests(unittest.TestCase):
         (self.root / 'unrelated.html').write_text('outside collection', encoding='utf-8')
         self.assertEqual(self.invoke('--id', A)[0], 0)
         self.assertEqual(self.invoke('--audit')[0], 0)
+
+    def test_index_named_directory_is_traversed_and_fifo_is_unreadable(self):
+        path = self.add('index.html/nested.html', A)
+        self.assertEqual(self.invoke('--id', A), (0, str(path) + '\n', ''))
+        fifo = self.collection / 'pipe.html'
+        os.mkfifo(fifo)
+        real_read = Path.read_text
+        def read(path, **kwargs):
+            if path == fifo:
+                raise AssertionError('FIFO must not be opened')
+            return real_read(path, **kwargs)
+        with patch.object(Path, 'read_text', read):
+            status, stdout, _ = self.invoke('--audit')
+            self.assertEqual(status, 1)
+            self.assertIn('UNREADABLE:', stdout)
+            self.assertEqual(self.invoke('--id', A)[0], 2)
 
 
 class TagReportingTests(unittest.TestCase):

@@ -4,13 +4,13 @@ import argparse
 from collections import defaultdict
 from importlib.util import module_from_spec, spec_from_file_location
 import json
-import os
 from pathlib import Path
 import stat
 import sys
 from urllib.parse import parse_qs, unquote, urlsplit
 from videx_config import default_library
 from videx_identity import VIDEO_ID, IdentityError, bookmark_identity
+from videx_inventory import scan_bookmarks
 
 
 def extract_id(url):
@@ -39,37 +39,9 @@ def extract_id(url):
 
 def inventory(root):
     """Inspect only the bookmark collection, retaining every traversal failure."""
-    files, identities, issues = [], {}, []
-
-    def walk(directory):
-        try:
-            with os.scandir(directory) as entries:
-                children = sorted(entries, key=lambda entry: entry.name)
-            for entry in children:
-                path = Path(entry.path)
-                if path.name.lower() == 'index.html':
-                    continue
-                try:
-                    mode = entry.stat(follow_symlinks=False).st_mode
-                    if stat.S_ISLNK(mode):
-                        raise ValueError('symbolic link prevents a complete local inventory')
-                    if stat.S_ISDIR(mode):
-                        walk(path)
-                    elif path.suffix == '.html':
-                        if not stat.S_ISREG(mode):
-                            raise ValueError('bookmark is not a regular file')
-                        files.append(path)
-                except (OSError, ValueError) as exc:
-                    issues.append((path, IdentityError(str(exc))))
-        except OSError as exc:
-            issues.append((directory, IdentityError(str(exc))))
-
-    try:
-        if not stat.S_ISDIR(root.lstat().st_mode):
-            raise ValueError('bookmarks collection must be a regular directory, not a symbolic link')
-    except (OSError, ValueError) as exc:
-        return files, identities, [(root, IdentityError(str(exc)))], False
-    walk(root)
+    files, filesystem_issues, available = scan_bookmarks(root)
+    identities = {}
+    issues = [(path, IdentityError(str(exc))) for path, exc in filesystem_issues]
     for path in files:
         try:
             identities[path] = bookmark_identity(path)
@@ -77,7 +49,6 @@ def inventory(root):
             issues.append((path, exc))
         except (OSError, UnicodeError) as exc:
             issues.append((path, IdentityError(str(exc))))
-    available = not any(path == root for path, _ in issues)
     return files, identities, issues, available
 
 
@@ -221,7 +192,8 @@ def tag_report(library, args):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = argparse.ArgumentParser(description=__doc__,
+        epilog='Bookmark symlinks and special files are not read. Incomplete inventories prevent lookup; audit reports the issues.')
     p.add_argument("library", type=Path, nargs="?", help="Library root (default: configured library)")
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--url")
@@ -234,7 +206,7 @@ def main():
         p.error('--json requires --show-tags')
     try:
         args.library = args.library.expanduser().resolve() if args.library else default_library()
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         if args.show_tags and args.json:
             print(json.dumps({'report_version': 1, 'operation': 'audit' if args.audit else 'lookup',
                               'library': None, 'catalog': {'status': 'not_read'}, 'bookmarks': [],
