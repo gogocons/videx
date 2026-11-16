@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from test_videx_inventory import snapshot
+from test_bookmark_tag import duplicate_catalog_documents
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -619,6 +620,22 @@ if os.environ.get('VIDEX_FIXTURE_BAD_CATALOG'):
                     self.assertFalse((self.root / 'extractor-called').exists())
                     self.assertEqual({str(p): p.read_bytes() for p in self.library.rglob('*') if p.is_file()}, before)
                     self.assertNotIn('Traceback', result.stderr)
+
+    def test_duplicate_catalog_preflight_refuses_capture_and_refresh(self):
+        existing = self.collection / 'renamed.html'
+        existing.write_text(document(A))
+        (self.library / 'catalog.json.bak-existing').write_bytes(b'backup sentinel')
+        for content in duplicate_catalog_documents():
+            (self.library / 'catalog.json').write_text(content)
+            before = snapshot(self.library)
+            for identity, extra in ((C, []), (A, ['--overwrite', '--apply'])):
+                with self.subTest(identity=identity, content=content):
+                    result = self.capture('https://youtu.be/' + identity, *extra)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn('Duplicate catalog object member', result.stderr)
+                    self.assertFalse((self.root / 'extractor-called').exists())
+                    self.assertEqual(snapshot(self.library), before)
+
 
     def test_tagged_capture_rechecks_catalog_after_extraction(self):
         existing = self.collection / 'renamed.html'

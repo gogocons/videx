@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from test_videx_inventory import inventory as bookmark_filesystem
+from test_bookmark_tag import duplicate_catalog_documents
 
 PROJECT = Path(__file__).resolve().parents[1]
 with patch.object(sys, 'path', [str(PROJECT / 'scripts')] + sys.path):
@@ -449,6 +450,34 @@ class LookupArgumentBoundaryTests(unittest.TestCase):
                     self.assertEqual(payload['catalog']['status'], 'missing')
                     self.assertEqual(payload['bookmarks'][0]['tags'], [])
                 self.assertEqual(self.snapshot(), before)
+
+    def test_duplicate_catalogs_preserve_json_errors_and_independent_lookup(self):
+        path = self.add('renamed.html', A)
+        catalog = self.root / 'catalog.json'
+        for content in duplicate_catalog_documents():
+            catalog.write_text(content)
+            before = self.snapshot()
+            plain = self.run_cli('--id=' + A)
+            self.assertEqual((plain.returncode, plain.stdout), (0, str(path) + '\n'))
+            human = self.run_cli('--id=' + A, '--show-tags')
+            self.assertEqual(human.returncode, 2)
+            self.assertIn('Duplicate catalog object member', human.stderr)
+            report = self.run_cli('--id=' + A, '--show-tags', '--json')
+            self.assertEqual(report.returncode, 2, report.stderr)
+            payload = json.loads(report.stdout)
+            self.assertEqual(payload['catalog']['status'], 'unavailable')
+            self.assertIsNone(payload['bookmarks'][0]['tags'])
+            self.assertEqual(payload['issues'][0]['category'], 'CATALOG_ERROR')
+            self.assertEqual(self.snapshot(), before)
+        self.add(f'Conflict [{B}].html', A)
+        before = self.snapshot()
+        audit = self.run_cli('--audit', '--show-tags', '--json')
+        self.assertEqual(audit.returncode, 2, audit.stderr)
+        payload = json.loads(audit.stdout)
+        self.assertEqual({issue['category'] for issue in payload['issues']}, {'MISMATCH', 'CATALOG_ERROR'})
+        self.assertEqual(payload['summary']['mismatches'], 1)
+        self.assertIsNone(payload['bookmarks'][0]['tags'])
+        self.assertEqual(self.snapshot(), before)
 
 
 if __name__ == '__main__':

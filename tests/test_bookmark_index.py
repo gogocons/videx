@@ -16,6 +16,7 @@ import threading
 import unittest
 from unittest.mock import patch
 from test_videx_inventory import snapshot
+from test_bookmark_tag import duplicate_catalog_documents
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -722,6 +723,19 @@ console.log(JSON.stringify(results));
         self.assertEqual(status, 0)
         self.assertIn('Indexed 1 bookmarks (1 skipped)', stdout)
         self.assertEqual(self.parsed_output()[0]['items'][0]['href'], 'bookmarks/index.html/renamed.html')
+
+    def test_duplicate_catalog_members_preserve_index_and_all_source_files(self):
+        self.bookmark()
+        self.output.write_bytes(b'old index sentinel')
+        self.output.chmod(0o640)
+        (self.root / 'catalog.json.bak-existing').write_bytes(b'backup sentinel')
+        for content in duplicate_catalog_documents():
+            (self.root / 'catalog.json').write_text(content)
+            before = snapshot(self.root)
+            with patch.object(indexer, 'write_index_atomic') as writer:
+                self.assertEqual(self.run_index()[0], 2)
+                writer.assert_not_called()
+            self.assertEqual(snapshot(self.root), before)
 
 
 if __name__ == '__main__':

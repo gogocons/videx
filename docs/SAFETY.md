@@ -69,6 +69,8 @@ The table describes default command behavior; opt-in catalog reporting can addit
 
 Malformed, unreadable, symlinked, or non-regular catalogs produce status `2`. JSON retains any audit findings, includes a `CATALOG_ERROR` issue, and represents unavailable tags as `null`, not `[]`; human reports explain the error on stderr. Lookup failures (`1` not found, `2` unsafe/invalid, `3` URL needs extraction) do not read the catalog. Default lookup/audit behavior and exit codes remain unchanged. Argument syntax errors still use normal argparse diagnostics.
 
+Duplicate decoded catalog keys are invalid recursively, even when their values match or occur in unknown fields. Catalog-dependent operations reject them before catalog mutation, backup, or publication; index builds preserve the old index and tagged capture rejects them during preflight. Read-only tag queries reject them too. Catalog-independent lookup and untagged capture retain their existing behavior; a later requested index rebuild remains a separate stage. No command repairs or normalizes an ambiguous catalog.
+
 Partial tag reports use `Inspected unique IDs (partial)` and `Unverified catalog entries`; only complete inspection labels entries `Catalog entries without matching bookmarks`. Opt-in audit JSON preserves findings when catalog reporting fails. For its fields and null/empty-list distinction, see [report version 1](DATA_FORMATS.md#json-report-version-1).
 
 ## Offline upgrades

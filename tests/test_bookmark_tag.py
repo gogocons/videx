@@ -29,6 +29,35 @@ def bookmark(video_id):
     return '<script id="youtube-metadata">' + json.dumps({'id': video_id}) + '</script>'
 
 
+def duplicate_catalog_documents():
+    """Raw JSON is required: dict fixtures would discard the repeated keys."""
+    def catalog(record='{"tags":["keep"]}', collections='{}', extra=''):
+        return '{"version":1,"bookmarks":{"' + A + '":' + record + '},"collections":' + collections + extra + '}'
+
+    base = catalog()
+    pair = '"' + A + '":{"tags":["keep"]}'
+    return [
+        base.replace('"version":1', '"version":1,"version":1'),
+        base.replace('"version":1', '"version":2,"version":1'),
+        base.replace('"bookmarks":', '"bookmarks":{},"bookmarks":'),
+        base.replace(pair, pair + ',' + pair),
+        base.replace(pair, pair + ',"' + A + '":{"tags":["other"]}'),
+        catalog('{"tags":["keep"],"tags":["keep"]}'),
+        catalog('{"tags":["hidden"],"tags":["other"]}'),
+        catalog('{"tags":[],"\\u0074ags":["keep"]}'),
+        catalog('{"tags":[],"notes":"one","notes":"two"}'),
+        catalog('{"tags":[{"x":1,"x":2}]}'),
+        base.replace('"bookmarks":{', '"bookmarks":{"' + B + '":{"tags":[],"tags":[]},'),
+        catalog(extra=',"collections":{"saved":[]}'),
+        catalog(collections='{"saved":[],"saved":[]}'),
+        catalog(collections='{"saved":{"extra":{"x":1,"x":2}}}'),
+        catalog(extra=',"future":{"x":1,"x":1}'),
+        catalog(extra=',"future":1,"future":2'),
+        catalog(extra=',"future":[{"nested":{"x":1,"x":2}}]'),
+        catalog('{"tags":[],"future":[{"x":1,"x":1}]}'),
+    ]
+
+
 class TagOrderingTests(unittest.TestCase):
     def setUp(self):
         fixture = tempfile.TemporaryDirectory()
@@ -231,6 +260,32 @@ class CatalogValidationTests(unittest.TestCase):
                         # Deliberately preserve noncanonical formatting and bytes.
                         self.path.write_bytes(('  ' + json.dumps(catalog) + '\n\n').encode('utf-8'))
                         self.assert_refused(f'tags for {video_id} must contain only strings')
+
+    def test_recursive_duplicate_members_refuse_all_operations_without_writes(self):
+        for number, content in enumerate(duplicate_catalog_documents()):
+            with self.subTest(number=number):
+                self.path.write_bytes(('  ' + content + '\n\n').encode('utf-8'))
+                self.assert_refused('Duplicate catalog object member')
+
+    def test_exact_keys_and_unknown_fields_survive_real_applied_mutation(self):
+        catalog = json.loads(json.dumps(self.catalog))
+        catalog['bookmarks'][A]['Tags'] = ['distinct']
+        catalog['bookmarks'][A]['future'] = [{'é': 1, 'e\u0301': 2}]
+        catalog['bookmarks'][A.lower()] = {'tags': ['case-sensitive ID']}
+        catalog['collections'] = {'Saved': {'members': [A]}, 'saved': {'members': [B]}}
+        catalog['future'] = [{' x ': 1, 'x': 2, 'X': 3}]
+        self.path.write_text(json.dumps(catalog, ensure_ascii=False))
+        original = self.path.read_bytes()
+        expected = json.loads(original)
+        expected['bookmarks'][A]['tags'] = ['keep', 'new']
+        result = subprocess.run([sys.executable, '-B', str(SCRIPTS / 'yt-bookmark-tag.py'),
+                                 '--apply', '--', str(self.root), 'add', A, 'new'],
+                                cwd=self.root, text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(self.path.read_text()), expected)
+        backups = [p for p in self.root.glob('catalog.json.bak-*') if p.name != 'catalog.json.bak-existing']
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), original)
 
     def test_missing_catalog_previews_and_read_only_operations_do_not_create_it(self):
         for arguments in self.operations:
@@ -518,6 +573,23 @@ class TagArgumentBoundaryTests(unittest.TestCase):
                                  capture_output=True, timeout=15)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         self.assertEqual(json.loads(self.catalog.read_text())['bookmarks'][A]['tags'], ['Python', 'Research'])
+
+    def test_duplicate_catalogs_refuse_real_read_only_preview_and_apply_commands(self):
+        (self.collection / 'renamed.html').write_text(bookmark(A))
+        (self.root / 'catalog.json.bak-existing').write_bytes(b'backup sentinel')
+        for number, content in enumerate(duplicate_catalog_documents()):
+            self.catalog.write_text(content)
+            self.catalog.chmod(0o640)
+            before = snapshot(self.root)
+            for operation, values, apply in (('list', [A], False), ('report', [], False),
+                                             ('add', [A, 'new'], False), ('add', [A, 'new'], True),
+                                             ('prune', [], True)):
+                with self.subTest(number=number, operation=operation, apply=apply):
+                    result = self.run_cli(operation, *values, apply=apply)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn('Duplicate catalog object member', result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+                    self.assertEqual(snapshot(self.root), before)
 
 
 class TagReportCompletenessTests(unittest.TestCase):

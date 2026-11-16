@@ -26,7 +26,16 @@ def load(path):
         return empty()
     if not stat.S_ISREG(mode):
         raise ValueError(f'{path}: catalog must be a regular file, not a symlink or special file')
-    obj = json.loads(path.read_text(encoding='utf-8'))
+
+    def catalog_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f'{path}: Duplicate catalog object member {key!r}')
+            result[key] = value
+        return result
+
+    obj = json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=catalog_object)
     if not isinstance(obj, dict) or obj.get('version') != 1 or not isinstance(obj.get('bookmarks'), dict) or not isinstance(obj.get('collections'), dict):
         raise ValueError('Unsupported or invalid catalog schema; refusing to modify')
     for video_id, record in obj['bookmarks'].items():
@@ -141,7 +150,8 @@ def main():
                'Bookmark symlinks and special files are not read. Mutations require a complete inventory. '
                'list reads only the catalog. report returns 0 when complete and clean, 1 for partial inspection '
                'or duplicate IDs, and 2 for invalid arguments, roots, or catalogs. Partial reports label unmatched '
-               'records as Unverified catalog entries, not confirmed orphans.')
+               'records as Unverified catalog entries, not confirmed orphans. '
+               'Duplicate decoded catalog object keys are invalid at every nesting level (status 2).')
     parser.add_argument('library', type=Path, help='Library root containing bookmarks/ (omit when starting with an operation)')
     parser.add_argument('operation', choices=['add', 'remove', 'set', 'rename', 'list', 'report', 'prune'])
     parser.add_argument('values', nargs='*', help='For add/remove/set: VIDEO_ID TAG...; rename: OLD NEW; list: VIDEO_ID')

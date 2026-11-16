@@ -51,6 +51,8 @@ A minimal catalog has this structure:
 
 The loader requires an object with version `1`, a `bookmarks` object, and a `collections` object. Bookmark keys must be valid video IDs and records must be objects. If present, `tags` must be an array of strings; an omitted tag array is treated as empty. Validation covers unrelated records and orphan records too. Missing catalogs are supported as empty catalogs.
 
+Catalog object members must have unique decoded keys at every nesting level, including objects inside arrays, reserved collections data, and unknown fields. Identical and conflicting duplicates are both rejected. Escaped spellings such as `"tags"` and `"\u0074ags"` are the same decoded key; keys are not trimmed, casefolded, or Unicode-normalized. Case-distinct IDs and keys remain distinct. Unambiguous unknown fields remain preserved by ordinary tag mutations. This catalog rule does not change bookmark metadata's separate duplicate-member compatibility below.
+
 `collections` is reserved structure required by the catalog format. User-facing collection management and collection browsing are future work; the presence of this object does not implement those capabilities.
 
 ## Personal tag normalization
