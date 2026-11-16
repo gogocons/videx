@@ -110,6 +110,8 @@ python3 -B scripts/yt-bookmark-index.py '/path/to/library'
 
 Capture accepts repeated `--tag` options. New bookmarks receive their requested tags automatically in `catalog.json`; existing bookmarks preview tag changes unless `--apply` is supplied. `--overwrite` independently refreshes the bookmark HTML; `--apply` controls existing-bookmark tag changes only.
 
+Capture consumes the argument after each `--tag` literally, including `--apply`, `--help`, `--app`, `-topic`, and `--unknown=value`. For example, `--tag Research --tag --apply` previews both tags on an existing bookmark; add a separate standalone `--apply` to save them. A tag named `--apply` never enables writes by itself.
+
 ```bash
 # New bookmark: save both tags automatically; existing bookmark: preview additions
 bash scripts/yt-bookmark.sh --tag Python --tag Research 'https://youtu.be/AAAAAAAAAAA'
@@ -126,6 +128,8 @@ Requested tags use the tag utility's normalization and validation: whitespace is
 Videx identifies existing bookmarks by **video ID**, rather than their title or channel directory. An existing ID is skipped by default; adding `--re-index` still rebuilds the index after a skip. With `--overwrite`, Videx refreshes the matching HTML file at its existing path instead of creating a renamed copy. If multiple matches are found, Videx refuses to choose one automatically.
 
 Video IDs are case-sensitive 11-character strings containing letters, digits, `_` or `-`. A filename ID must agree with embedded metadata. Renamed bookmarks use their metadata ID; legacy filename-only bookmarks remain supported by lookup and tagging only when the metadata element is absent. Present but malformed metadata never falls back to the filename. Lookup and catalog changes refuse conflicting, ambiguous, or incomplete inventories (status `2`); capture stops on lookup failure and validates the extractor's unchanged ID before writing. Indexing and offline upgrades warn and skip damaged or conflicting pages, including legacy pages lacking the metadata they require. Audit reports conflicts separately from resolved IDs. No identity is automatically repaired.
+
+IDs beginning with one or two hyphens are valid. Capture uses its existing two-argument syntax, for example `bash scripts/yt-bookmark.sh --id '-AAAAAAAAAA'`; it does not accept `--id=VALUE`. Direct lookup uses the equals form for these IDs: `python3 -B scripts/yt-bookmark-find.py '/path/to/library' --id=-AAAAAAAAAA`. Quoting a separate lookup argument does not prevent option interpretation; `--id -- VALUE` is not a substitute for the equals form.
 
 Capture also checks the entire bookmark inventory before extraction and again before writing, rejecting duplicate IDs anywhere in the collection under the same rules as catalog mutations. Embedded and incoming metadata JSON reject repeated `id` keys even when their values match; other repeated keys retain their existing last-value behavior.
 
@@ -158,6 +162,18 @@ Place an explicit library root before the operation to override configuration:
 python3 -B scripts/yt-bookmark-tag.py '/path/to/library' add AAAAAAAAAAA Research --apply
 ```
 
+For hyphen-prefixed IDs or option-like tags, put genuine options first, then `--`, then **all** positional arguments, including an explicit library root:
+
+```bash
+# Preview: --apply and --help below are literal tags
+python3 -B scripts/yt-bookmark-tag.py -- '/path/to/library' add -AAAAAAAAAA Research --apply --help
+
+# Save those tags: the genuine write flag is before the separator
+python3 -B scripts/yt-bookmark-tag.py --apply -- '/path/to/library' add -AAAAAAAAAA Research --apply --help
+```
+
+Use the same ordering for `remove`, `set`, `list`, and option-like `rename` values. Do not append the write flag after `--`, where it is data. Keeping options before all positional arguments also avoids Python-version differences when argparse handles options mixed with a variable-length positional list. The existing configured-library shorthand remains supported for ordinary arguments; the examples above use an explicit library so no shorthand parsing change is needed.
+
 ### Library integrity audit
 
 Use the standalone helper to inspect an existing library without modifying its files:
@@ -185,6 +201,7 @@ Add `--show-tags` to include personal tags from the selected library's `catalog.
 
 ```bash
 python3 -B scripts/yt-bookmark-find.py '/path/to/library' --id AAAAAAAAAAA --show-tags
+python3 -B scripts/yt-bookmark-find.py '/path/to/library' --id=-AAAAAAAAAA --show-tags --json
 python3 -B scripts/yt-bookmark-find.py '/path/to/library' --audit --show-tags
 python3 -B scripts/yt-bookmark-find.py '/path/to/library' --audit --show-tags --json
 ```

@@ -225,7 +225,7 @@ def main():
     p.add_argument("library", type=Path, nargs="?", help="Library root (default: configured library)")
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--url")
-    group.add_argument("--id")
+    group.add_argument("--id", help="Video ID; use --id=VALUE for leading-hyphen IDs (capture uses --id VALUE)")
     group.add_argument("--audit", action="store_true", help="Audit all bookmarks for duplicates and ID inconsistencies")
     p.add_argument('--show-tags', action='store_true', help='Report personal tags from the selected library catalog')
     p.add_argument('--json', action='store_true', help='Emit one JSON report (requires --show-tags)')

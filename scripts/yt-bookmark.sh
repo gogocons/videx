@@ -28,6 +28,9 @@ An existing video ID is skipped by default, even if its title has changed.
 The index is not rebuilt unless --re-index is specified.
 Requested tags and the catalog are validated before capture. Tags on new
 bookmarks are applied automatically; existing-bookmark tags require --apply.
+--tag consumes its next argument literally, even --apply or --help. A tag
+named --apply does not enable writes; supply a separate --apply to do that.
+For leading-hyphen IDs use --id VALUE (lookup uses --id=VALUE).
 EOF
 }
 
@@ -184,16 +187,16 @@ tag_existing() {
   local vid="$1"
   if ((${#TAGS[@]})); then
     if ((APPLY)); then
-      python3 -B "$SCRIPT_DIR/yt-bookmark-tag.py" "$LIBRARY_DIR" add "$vid" "${TAGS[@]}" --apply
+      python3 -B "$SCRIPT_DIR/yt-bookmark-tag.py" --apply -- "$LIBRARY_DIR" add "$vid" "${TAGS[@]}"
     else
-      python3 -B "$SCRIPT_DIR/yt-bookmark-tag.py" "$LIBRARY_DIR" add "$vid" "${TAGS[@]}"
+      python3 -B "$SCRIPT_DIR/yt-bookmark-tag.py" -- "$LIBRARY_DIR" add "$vid" "${TAGS[@]}"
     fi
   fi
 }
 tag_new() {
   local vid="$1"
   if ((${#TAGS[@]})); then
-    python3 -B "$SCRIPT_DIR/yt-bookmark-tag.py" "$LIBRARY_DIR" add "$vid" "${TAGS[@]}" --apply
+    python3 -B "$SCRIPT_DIR/yt-bookmark-tag.py" --apply -- "$LIBRARY_DIR" add "$vid" "${TAGS[@]}"
   fi
 }
 
@@ -269,7 +272,7 @@ video_id="$(printf '%s\n' "$fields" | sed -n '3p')"
 # parsed locally and URLs that redirect to a different video.
 resolved_existing=""
 resolved_status=0
-resolved_existing="$(lookup --id "$video_id")" || resolved_status=$?
+resolved_existing="$(lookup --id="$video_id")" || resolved_status=$?
 if ((resolved_status == 2)); then exit 1; fi
 inventory_preflight || exit 1
 tag_preflight || exit 2

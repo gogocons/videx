@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -405,6 +406,115 @@ class PruneTests(unittest.TestCase):
         self.assertEqual([call[0] for call in operations.mock_calls], ['backup', 'replace'])
         self.assertEqual(operations.backup.call_args.args[0], ROOT / 'catalog.json')
         self.assertEqual(operations.replace.call_args.args[1], ROOT / 'catalog.json')
+
+
+class TagArgumentBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        fixture = tempfile.TemporaryDirectory(prefix='videx-tag-arguments-')
+        self.addCleanup(fixture.cleanup)
+        self.root = Path(fixture.name)
+        self.collection = self.root / 'bookmarks'
+        self.collection.mkdir()
+        self.catalog = self.root / 'catalog.json'
+
+    def run_cli(self, operation, *values, apply=False):
+        return subprocess.run([sys.executable, '-B', str(SCRIPTS / 'yt-bookmark-tag.py'),
+                               *(['--apply'] if apply else []), '--', str(self.root), operation, *values],
+                              cwd=self.root, capture_output=True, text=True, timeout=15,
+                              env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+
+    def snapshot(self):
+        result = {}
+        for path in [self.root, *sorted(self.root.rglob('*'))]:
+            info = path.lstat()
+            content = (os.readlink(path) if path.is_symlink() else
+                       path.read_bytes() if path.is_file() else None)
+            result[str(path.relative_to(self.root))] = info.st_mode, info.st_mtime_ns, content
+        return result
+
+    def test_real_parser_delimits_preview_apply_and_all_tag_operations(self):
+        tags = ['Research', '--apply', '--help', '--app', '-topic', '--unknown=value', '--']
+        sentinel = self.root / 'catalog.json.bak-existing'
+        sentinel.write_bytes(b'existing backup')
+        for identity in (A, '-AAAAAAAAAA', '--AAAAAAAAA', '-0AAAAAAAAA', '-1234567890'):
+            with self.subTest(identity=identity):
+                path = self.collection / f'Video [{identity}].html'
+                path.write_text(bookmark(identity))
+                path.chmod(0o640)
+                if self.catalog.exists():
+                    self.catalog.unlink()
+                # A missing catalog must remain missing even with a literal --apply.
+                before = self.snapshot()
+                preview = self.run_cli('add', identity, *tags)
+                self.assertEqual(preview.returncode, 0, preview.stderr)
+                self.assertIn('DRY RUN: add', preview.stdout)
+                self.assertEqual(self.snapshot(), before)
+                created = self.run_cli('add', identity, *tags, apply=True)
+                self.assertEqual(created.returncode, 0, created.stderr)
+                self.assertEqual(json.loads(self.catalog.read_text())['bookmarks'][identity]['tags'],
+                                 sorted(tags, key=str.casefold))
+                self.catalog.chmod(0o640)
+                operations = [('add', identity, '--new'), ('remove', identity, '--help'),
+                              ('set', identity, '--apply'), ('set', identity),
+                              ('rename', '--help', '--renamed'), ('list', identity), ('report',)]
+                for operation in operations:
+                    before = self.snapshot()
+                    result = self.run_cli(*operation)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.snapshot(), before)
+                listed = self.run_cli('list', identity)
+                self.assertEqual(set(listed.stdout.splitlines()), set(tags))
+                # Apply remove, rename, and clear through the real nargs='*' parser.
+                for operation, expected in (
+                        (('remove', identity, '--help'), [t for t in tags if t != '--help']),
+                        (('rename', '--app', '--renamed'),
+                         [t if t != '--app' else '--renamed' for t in tags if t != '--help']),
+                        (('set', identity), [])):
+                    previous = self.catalog.read_bytes()
+                    backups = set(self.root.glob('catalog.json.bak-*'))
+                    result = self.run_cli(*operation, apply=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    saved = json.loads(self.catalog.read_text())['bookmarks'].get(identity, {}).get('tags', [])
+                    self.assertEqual(saved, sorted(expected, key=str.casefold))
+                    backup, = set(self.root.glob('catalog.json.bak-*')) - backups
+                    self.assertEqual(backup.read_bytes(), previous)
+                self.assertEqual(path.read_text(), bookmark(identity))
+                self.assertEqual(sentinel.read_bytes(), b'existing backup')
+                self.assertEqual(list(self.root.glob('.catalog-*.tmp')), [])
+
+    def test_delimited_arguments_preserve_catalog_and_identity_refusals(self):
+        identity = '-AAAAAAAAAA'
+        path = self.collection / f'Video [{identity}].html'
+        target = self.root / 'synthetic-target.json'
+        target.write_text(json.dumps({'version': 1, 'bookmarks': {}, 'collections': {}}))
+        for problem in ('malformed', 'symlink', 'conflict', 'invalid'):
+            if self.catalog.exists() or self.catalog.is_symlink():
+                self.catalog.unlink()
+            path.write_text(bookmark(B if problem == 'conflict' else identity))
+            if problem == 'malformed':
+                self.catalog.write_text('{broken')
+            elif problem == 'symlink':
+                self.catalog.symlink_to(target)
+            for apply in (False, True):
+                with self.subTest(problem=problem, apply=apply):
+                    before = self.snapshot()
+                    result = self.run_cli('add', '-short' if problem == 'invalid' else identity,
+                                          'Research', '--apply', '--help', apply=apply)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(self.snapshot(), before)
+
+    def test_ordinary_cli_keeps_legacy_trailing_apply_option(self):
+        (self.collection / f'Video [{A}].html').write_text(bookmark(A))
+        command = [sys.executable, '-B', str(SCRIPTS / 'yt-bookmark-tag.py'),
+                   str(self.root), 'add', A, 'Python', 'Research']
+        before = self.snapshot()
+        preview = subprocess.run(command, cwd=self.root, text=True, capture_output=True, timeout=15)
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertEqual(self.snapshot(), before)
+        applied = subprocess.run([*command, '--apply'], cwd=self.root, text=True,
+                                 capture_output=True, timeout=15)
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual(json.loads(self.catalog.read_text())['bookmarks'][A]['tags'], ['Python', 'Research'])
 
 
 if __name__ == '__main__':

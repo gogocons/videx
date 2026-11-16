@@ -3,6 +3,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -354,6 +355,83 @@ class TagReportingTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()) as stdout:
             self.assertEqual(finder.main(), 2)
         self.assertEqual(json.loads(stdout.getvalue())['issues'][0]['category'], 'CONFIG_ERROR')
+
+
+class LookupArgumentBoundaryTests(unittest.TestCase):
+    setUp = FindTests.setUp
+    add = FindTests.add
+
+    def run_cli(self, *arguments):
+        return subprocess.run([sys.executable, '-B', str(PROJECT / 'scripts' / 'yt-bookmark-find.py'),
+                               str(self.root), *arguments], cwd=self.root, text=True,
+                              capture_output=True, timeout=15,
+                              env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+
+    def snapshot(self):
+        result = {}
+        for path in [self.root, *sorted(self.root.rglob('*'))]:
+            info = path.lstat()
+            content = (os.readlink(path) if path.is_symlink() else
+                       path.read_bytes() if path.is_file() else None)
+            result[str(path.relative_to(self.root))] = info.st_mode, info.st_mtime_ns, content
+        return result
+
+    def test_leading_hyphen_lookup_urls_and_json_use_real_cli(self):
+        identities = (A, '-AAAAAAAAAA', '--AAAAAAAAA', '-0AAAAAAAAA', '-1234567890')
+        paths = {identity: self.add(f'renamed-{number}.html', identity)
+                 for number, identity in enumerate(identities)}
+        tags = ['--apply', '--help', '--app', '-topic', '--unknown=value', '--']
+        catalog = self.root / 'catalog.json'
+        catalog.write_text(json.dumps({'version': 1, 'bookmarks': {
+            identity: {'tags': tags} for identity in identities}, 'collections': {}}))
+        catalog.chmod(0o640)
+        before = self.snapshot()
+        for identity, path in paths.items():
+            for arguments in ((f'--id={identity}',), ('--url', 'https://youtu.be/' + identity),
+                              ('--url', 'https://www.youtube.com/watch?v=' + identity)):
+                with self.subTest(identity=identity, arguments=arguments):
+                    found = self.run_cli(*arguments)
+                    self.assertEqual(found.returncode, 0, found.stderr)
+                    self.assertEqual(found.stdout, str(path) + '\n')
+            report = self.run_cli(f'--id={identity}', '--show-tags', '--json')
+            self.assertEqual(report.returncode, 0, report.stderr)
+            payload = json.loads(report.stdout)
+            self.assertEqual(payload['exit_status'], 0)
+            self.assertEqual(payload['bookmarks'], [{'id': identity, 'paths': [str(path)], 'tags': tags}])
+        audit = self.run_cli('--audit', '--show-tags', '--json')
+        self.assertEqual(audit.returncode, 0, audit.stderr)
+        self.assertEqual({item['id'] for item in json.loads(audit.stdout)['bookmarks']}, set(identities))
+        ordinary = self.run_cli('--id', A)
+        self.assertEqual((ordinary.returncode, ordinary.stdout), (0, str(paths[A]) + '\n'))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_json_boundary_preserves_validation_and_read_only_behavior(self):
+        identity = '-AAAAAAAAAA'
+        path = self.add(f'Video [{identity}].html', identity)
+        catalog = self.root / 'catalog.json'
+        target = self.root / 'synthetic-target.json'
+        target.write_text(json.dumps({'version': 1, 'bookmarks': {}, 'collections': {}}))
+        for problem in ('missing', 'malformed', 'symlink', 'conflict', 'invalid'):
+            if catalog.exists() or catalog.is_symlink():
+                catalog.unlink()
+            path.write_text('<script id="youtube-metadata">' + json.dumps({
+                'id': B if problem == 'conflict' else identity}) + '</script>')
+            if problem == 'malformed':
+                catalog.write_text('{broken')
+            elif problem == 'symlink':
+                catalog.symlink_to(target)
+            before = self.snapshot()
+            with self.subTest(problem=problem):
+                result = self.run_cli('--id=' + ('-short' if problem == 'invalid' else identity),
+                                      '--show-tags', '--json')
+                expected = 0 if problem == 'missing' else 2
+                self.assertEqual(result.returncode, expected, result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload['exit_status'], expected)
+                if problem == 'missing':
+                    self.assertEqual(payload['catalog']['status'], 'missing')
+                    self.assertEqual(payload['bookmarks'][0]['tags'], [])
+                self.assertEqual(self.snapshot(), before)
 
 
 if __name__ == '__main__':

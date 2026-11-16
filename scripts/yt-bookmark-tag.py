@@ -142,7 +142,9 @@ def report(obj, ids):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
         usage='%(prog)s [LIBRARY] OPERATION [VALUES ...] [--apply]',
-        epilog='Start with OPERATION to use the configured default library. Changes are previews unless --apply is supplied.')
+        epilog='Start with OPERATION to use the configured default library. Changes are previews unless --apply is supplied. '
+               'For hyphen-prefixed IDs or tags, use: [--apply] -- LIBRARY OPERATION VALUES ... . '
+               'All values after -- are literal; put the write option before --.')
     parser.add_argument('library', type=Path, help='Library root containing bookmarks/ (omit when starting with an operation)')
     parser.add_argument('operation', choices=['add', 'remove', 'set', 'rename', 'list', 'report', 'prune'])
     parser.add_argument('values', nargs='*', help='For add/remove/set: VIDEO_ID TAG...; rename: OLD NEW; list: VIDEO_ID')

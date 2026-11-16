@@ -266,6 +266,8 @@ class CaptureTests(unittest.TestCase):
         self.collection.mkdir(parents=True)
         bin_dir = self.root / 'bin'
         bin_dir.mkdir()
+        # Exercise child scripts with the interpreter running this suite.
+        (bin_dir / 'python3').symlink_to(sys.executable)
         temporary = self.root / 'tmp'
         temporary.mkdir()
         stub = bin_dir / 'yt-dlp'
@@ -291,13 +293,140 @@ if os.environ.get('VIDEX_FIXTURE_BAD_CATALOG'):
                                 TMPDIR=str(temporary), PYTHONDONTWRITEBYTECODE='1',
                                 VIDEX_FIXTURE_ROOT=str(self.root), VIDEX_FIXTURE_ID=json.dumps(A))
 
-    def capture(self, url=None, *extra, with_tags=True, bash=None):
+    def capture(self, url=None, *extra, with_tags=True, bash=None, id_text=None):
         command = [bash or os.environ.get('VIDEX_TEST_BASH', 'bash'), str(SCRIPTS / 'yt-bookmark.sh'),
                    '--output', str(self.library)]
         if with_tags:
             command.extend(['--tag', 'personal'])
-        return subprocess.run([*command, *extra, url or 'https://youtu.be/' + A],
+        source = ['--id', id_text] if id_text is not None else [url or 'https://youtu.be/' + A]
+        return subprocess.run([*command, *extra, *source],
                               env=self.environment, cwd=self.root, text=True, capture_output=True, timeout=15)
+
+    def library_snapshot(self):
+        result = {}
+        for path in [self.library, *sorted(self.library.rglob('*'))]:
+            info = path.lstat()
+            content = (os.readlink(path) if path.is_symlink() else
+                       path.read_bytes() if path.is_file() else None)
+            result[str(path.relative_to(self.library))] = (info.st_mode, info.st_mtime_ns, content)
+        return result
+
+    def test_option_like_tags_preview_and_explicit_apply_preserve_boundaries(self):
+        values = ['Research', '--apply', '--help', '--app', '-topic', '--unknown=value', '--']
+        tags = [arg for value in values for arg in ('--tag', value)]
+        catalog = self.library / 'catalog.json'
+        sentinel = self.library / 'catalog.json.bak-existing'
+        sentinel.write_bytes(b'preserve existing backup')
+        for identity in (A, '-AAAAAAAAAA', '--AAAAAAAAA', '-0AAAAAAAAA', '-1234567890'):
+            with self.subTest(identity=identity):
+                path = self.collection / f'Renamed [{identity}].html'
+                path.write_text(document(identity), encoding='utf-8')
+                path.chmod(0o640)
+                self.environment['VIDEX_FIXTURE_ID'] = json.dumps(identity)
+                if catalog.exists():
+                    catalog.unlink()
+                for existing_catalog in (False, True):
+                    if existing_catalog:
+                        catalog.write_text(json.dumps({'version': 1, 'bookmarks': {
+                            identity: {'tags': ['keep'], 'notes': 'preserve'}}, 'collections': {}}))
+                        catalog.chmod(0o640)
+                    before = self.library_snapshot()
+                    result = self.capture('https://youtu.be/' + identity, *tags, with_tags=False, bash='/bin/bash')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('DRY RUN: add', result.stdout)
+                    self.assertEqual(self.library_snapshot(), before)
+                    self.assertFalse((self.root / 'extractor-called').exists())
+                original = catalog.read_bytes()
+                backups = set(self.library.glob('catalog.json.bak-*'))
+                result = self.capture('https://youtu.be/' + identity, *tags, '--apply', with_tags=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                record = json.loads(catalog.read_text())['bookmarks'][identity]
+                self.assertEqual(record, {'tags': sorted(['keep', *values], key=str.casefold), 'notes': 'preserve'})
+                added, = set(self.library.glob('catalog.json.bak-*')) - backups
+                self.assertEqual(added.read_bytes(), original)
+                self.assertEqual(path.read_text(), document(identity))
+                self.assertEqual(sentinel.read_bytes(), b'preserve existing backup')
+                self.assertEqual(list(self.library.glob('.catalog-*.tmp')), [])
+
+    def test_leading_hyphen_capture_refresh_and_both_skip_paths(self):
+        for identity in ('-AAAAAAAAAA', '--AAAAAAAAA', '-0AAAAAAAAA', '-1234567890'):
+            with self.subTest(identity=identity):
+                self.environment['VIDEX_FIXTURE_ID'] = json.dumps(identity)
+                initial_tags = ['--apply', '--help', '--']
+                arguments = [arg for tag in initial_tags for arg in ('--tag', tag)]
+                created = self.capture(None, *arguments, with_tags=False, id_text=identity)
+                self.assertEqual(created.returncode, 0, created.stderr)
+                path, = [
+                    p for p in self.collection.rglob('*.html') if p.name.endswith(f'[{identity}].html')]
+                self.assertEqual(generator.resolve_identity(path.name, path.read_text()), identity)
+                catalog = self.library / 'catalog.json'
+                self.assertEqual(json.loads(catalog.read_text())['bookmarks'][identity]['tags'],
+                                 sorted(initial_tags, key=str.casefold))
+                (self.root / 'extractor-called').unlink()
+                before = self.library_snapshot()
+                skipped = self.capture('https://youtu.be/' + identity, with_tags=False)
+                self.assertEqual(skipped.returncode, 0, skipped.stderr)
+                self.assertFalse((self.root / 'extractor-called').exists())
+                self.assertEqual(self.library_snapshot(), before)
+                post_skip = self.capture('https://example.invalid/resolve', '--tag', '--app',
+                                         with_tags=False)
+                self.assertEqual(post_skip.returncode, 0, post_skip.stderr)
+                self.assertIn('SKIPPED:', post_skip.stdout)
+                self.assertIn('DRY RUN: add', post_skip.stdout)
+                self.assertTrue((self.root / 'extractor-called').exists())
+                self.assertEqual(self.library_snapshot(), before)
+                # Refresh the renamed original path, while leaving catalog tagging in preview.
+                renamed = path.with_name(f'renamed-{identity}.html')
+                path.rename(renamed)
+                renamed.write_text(document(identity))
+                catalog_before = catalog.stat(), catalog.read_bytes()
+                backups = {p: p.read_bytes() for p in self.library.glob('catalog.json.bak-*')}
+                refreshed = self.capture(None, '--overwrite', '--tag', '--unknown=value',
+                                         with_tags=False, id_text=identity)
+                self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
+                self.assertIn('REFRESH:', refreshed.stdout)
+                self.assertEqual(generator.resolve_identity(renamed.name, renamed.read_text()), identity)
+                self.assertNotEqual(renamed.read_text(), document(identity))
+                self.assertFalse(path.exists())
+                self.assertEqual(catalog.read_bytes(), catalog_before[1])
+                self.assertEqual(catalog.stat().st_mode, catalog_before[0].st_mode)
+                self.assertEqual(catalog.stat().st_mtime_ns, catalog_before[0].st_mtime_ns)
+                self.assertEqual({p: p.read_bytes() for p in self.library.glob('catalog.json.bak-*')}, backups)
+                applied = self.capture('https://example.invalid/resolve', '--tag', '--app', '--apply',
+                                       with_tags=False)
+                self.assertEqual(applied.returncode, 0, applied.stderr)
+                self.assertEqual(json.loads(catalog.read_text())['bookmarks'][identity]['tags'],
+                                 sorted([*initial_tags, '--app'], key=str.casefold))
+                refreshed_apply = self.capture(None, '--overwrite', '--tag', '--unknown=value', '--apply',
+                                               with_tags=False, id_text=identity)
+                self.assertEqual(refreshed_apply.returncode, 0, refreshed_apply.stderr)
+                self.assertEqual(json.loads(catalog.read_text())['bookmarks'][identity]['tags'],
+                                 sorted([*initial_tags, '--app', '--unknown=value'], key=str.casefold))
+
+    def test_option_like_capture_tags_do_not_bypass_catalog_or_identity_guards(self):
+        identity = '-AAAAAAAAAA'
+        path = self.collection / f'Original [{identity}].html'
+        path.write_text(document(identity))
+        catalog = self.library / 'catalog.json'
+        target = self.library / 'synthetic-target.json'
+        target.write_text(json.dumps({'version': 1, 'bookmarks': {}, 'collections': {}}))
+        for problem in ('malformed', 'symlink', 'conflict', 'invalid'):
+            with self.subTest(problem=problem):
+                if catalog.exists() or catalog.is_symlink():
+                    catalog.unlink()
+                path.write_text(document(B if problem == 'conflict' else identity))
+                if problem == 'malformed':
+                    catalog.write_text('{broken')
+                elif problem == 'symlink':
+                    catalog.symlink_to(target)
+                before = self.library_snapshot()
+                for apply in (False, True):
+                    options = ['--apply'] if apply else []
+                    result = self.capture(None, '--tag', 'Research', '--tag', '--apply', *options,
+                                          with_tags=False, id_text='-short' if problem == 'invalid' else identity)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.library_snapshot(), before)
+                    self.assertFalse((self.root / 'extractor-called').exists())
 
     def test_invalid_requested_tags_never_create_or_refresh_bookmarks(self):
         existing = self.collection / 'renamed.html'
