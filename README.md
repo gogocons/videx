@@ -26,7 +26,7 @@ Each bookmark is a standalone HTML page containing the video's thumbnail, descri
 ## Current features (v0.3.0)
 
 - Save a single video's title, channel, description, chapters, dates, tags, historical counts and thumbnail in a self-contained HTML page.
-- Browse a generated `index.html` offline; search by title, channel and description, filter channels, and sort by upload date/title/channel.
+- Browse a generated `index.html` offline; search by title, channel, description, video ID, and personal tags using the existing search bar, filter channels, and sort by upload date/title/channel.
 - Preserve a curated metadata schema without large extractor manifests (formats, automatic caption manifests, etc.).
 - **Prevent duplicate bookmarks by video ID**, even when a video's title or channel changes. Existing IDs are skipped by default.
 - **Refresh existing bookmarks with `--overwrite`**, preserving their original filenames and locations.
@@ -81,7 +81,9 @@ python3 -B scripts/yt-bookmark-index.py
 
 Index generation writes a unique temporary file beside `index.html`, then atomically replaces the index. Existing regular-file permissions are preserved; new indexes and replaced symlinks use normal creation permissions respecting the process umask, without writing through symlinks. Concurrent builds publish complete files; the last successful replacement wins.
 
-Rebuilding the index excludes every bookmark carrying the reserved personal tag `hidden` (case-insensitive, with surrounding whitespace normalized). Excluded bookmarks contribute no embedded metadata, links, thumbnails, search results, channel listings, or counts. Channels and Single Entries groups are calculated exclusively from visible bookmarks. Other normalized personal tags from the selected library's `catalog.json` appear as wrapping badges on bookmark cards; they do not add tag search or filtering. Missing catalogs or tag records produce no tag row; orphan records are ignored. Generated indexes remain self-contained offline.
+Rebuilding the index excludes every bookmark carrying the reserved personal tag `hidden` (case-insensitive, with surrounding whitespace normalized). Excluded bookmarks contribute no embedded metadata, links, thumbnails, search results, channel listings, or counts. Channels and Single Entries groups are calculated exclusively from visible bookmarks. Other normalized personal tags from the selected library's `catalog.json` appear as wrapping badges on bookmark cards and are searchable through the existing search bar. Each tag supports case-insensitive partial matches. Dedicated tag filtering remains future work. Missing catalogs or tag records produce no tag row; orphan records are ignored. Generated indexes remain self-contained offline.
+
+Regenerate the index after changes to its search functionality or catalog tags; an existing `index.html` contains a snapshot of both the search code and tag data. No network connection is needed to rebuild or search the index.
 
 Rebuild the index after adding or removing `hidden` to apply visibility changes. When valid bookmarks exist but all are hidden, rebuilding succeeds and replaces any older index with an empty-state index. A genuinely empty library or one containing no valid bookmarks retains exit status `1` and leaves any existing index untouched. Malformed, unreadable, symlinked, or non-regular catalogs cause exit status `2` before index writing, even when no valid bookmarks exist, leaving any existing index and its permissions untouched.
 
@@ -280,6 +282,8 @@ These files are excluded from Git tracking by default. Your bookmark collection 
 
 ### v0.3.0 release notes
 
+These historical notes describe v0.3.0 at release; see the current features above for subsequent index search and visibility behavior.
+
 - Added personal catalog management and repeatable capture tags, with preview/apply behavior for existing bookmarks.
 - Added opt-in lookup/audit tag reports and JSON output without changing unflagged lookup output.
 - Added normalized personal-tag badges to the self-contained offline index. Tags are display-only; `hidden` is not excluded.
@@ -292,7 +296,7 @@ Compatibility: catalog schema **1**, bookmark metadata schema **2**, and JSON re
 
 1. Import all accessible entries from a YouTube playlist as individual bookmarks, using the existing video-ID checks to skip duplicates and reporting failures.
 2. Collections for curated browsing, with bookmarks belonging to multiple collections.
-3. Personal-tag search/filtering and visual collection browsing in the index.
+3. Dedicated personal-tag filtering and visual collection browsing in the index.
 
 Longer-term possibilities include better batch management and a unified `videx` command, if the existing tools become cumbersome. These are ideas, not commitments.
 

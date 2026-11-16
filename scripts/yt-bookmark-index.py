@@ -132,7 +132,7 @@ a{color:inherit}.title a{text-decoration:none}.title a:hover{text-decoration:und
 <body><main>
 <header><div class="brand"><span class="play" aria-hidden="true">▶</span><div><h1>Videx</h1><div class="sub">Your offline video reference library</div></div></div><div class="stats" id="stats"></div></header>
 <div class="toolbar">
-<input id="search" type="search" placeholder="Search titles, channels, descriptions…" aria-label="Search bookmarks" autocomplete="off">
+<input id="search" type="search" placeholder="Search titles, channels, descriptions, personal tags…" aria-label="Search bookmarks" autocomplete="off">
 <select id="channel" aria-label="Filter channel"><option value="">All Channels</option></select>
 <select id="sort" aria-label="Sort bookmarks"><option value="upload-desc">Newest upload</option><option value="upload-asc">Oldest upload</option><option value="title-asc">Title A–Z</option><option value="title-desc">Title Z–A</option><option value="channel-asc">Channel A–Z</option></select>
 </div><div class="count" id="count" aria-live="polite"></div><section class="grid" id="grid" aria-label="Bookmarks"></section><div class="empty" id="empty" hidden>No matching bookmarks found.</div><div class="footer" id="footer"></div>
@@ -200,7 +200,8 @@ function render() {
 
         const searchMatch =
             !q ||
-            [x.title, x.channel, x.description, x.id]
+            [x.title, x.channel, x.description, x.id,
+             ...(Array.isArray(x.personalTags) ? x.personalTags : [])]
                 .some(v => v.toLocaleLowerCase().includes(q));
 
         return channelMatch && searchMatch;

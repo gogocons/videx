@@ -7,7 +7,9 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -249,6 +251,138 @@ class CatalogIndexTests(unittest.TestCase):
         parser.close()
         payload, = [script['text'] for script in parser.scripts if script['attrs'].get('id') == 'bookmark-data']
         return json.loads(payload), parser
+
+    def browser_results(self, cases, tag_overrides=None):
+        """Execute the generated script, using a minimal DOM rather than a browser dependency."""
+        runtime = shutil.which('deno') or shutil.which('node')
+        if runtime is None:
+            self.skipTest('Deno or Node.js required for generated JavaScript behavior checks')
+        data, parser = self.parsed_output()
+        for item in data['items']:
+            if tag_overrides and item['id'] in tag_overrides:
+                item.pop('personalTags', None)
+                item.update(tag_overrides[item['id']])
+        script, = [s['text'] for s in parser.scripts if s['attrs'].get('id') != 'bookmark-data']
+        harness = r'''
+class Element {
+    constructor(tag) {
+        this.tag = tag; this.children = []; this.value = ''; this.textContent = '';
+        this.handlers = {}; this.hidden = false;
+    }
+    append(...nodes) {
+        for (const node of nodes) {
+            if (node.tag === 'fragment') this.children.push(...node.children);
+            else this.children.push(node);
+        }
+    }
+    replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+    setAttribute() {}
+    addEventListener(event, handler) { this.handlers[event] = handler; }
+}
+const elements = Object.fromEntries(
+    ['bookmark-data', 'search', 'channel', 'sort', 'grid', 'count', 'empty', 'stats', 'footer']
+        .map(id => [id, new Element(id)]));
+elements['bookmark-data'].textContent = JSON.stringify(input.data);
+elements.sort.value = 'upload-desc';
+globalThis.document = {
+    getElementById: id => elements[id],
+    createElement: tag => new Element(tag),
+    createDocumentFragment: () => new Element('fragment'),
+};
+eval(input.script);
+const snapshot = () => ({
+    hrefs: elements.grid.children.map(card => card.children[0].href),
+    count: elements.count.textContent,
+    emptyHidden: elements.empty.hidden,
+    stats: elements.stats.textContent,
+    channels: elements.channel.children.map(option => option.value),
+});
+const results = [snapshot()];
+for (const test of input.cases) {
+    elements.search.value = test.query || '';
+    elements.channel.value = test.channel || '';
+    elements.sort.value = test.sort || 'upload-desc';
+    const control = test.control || 'search';
+    elements[control].handlers[control === 'search' ? 'input' : 'change']();
+    results.push(snapshot());
+}
+console.log(JSON.stringify(results));
+'''
+        if Path(runtime).name == 'deno':
+            bootstrap = 'const input = await new Response(Deno.stdin.readable).json();\n'
+            command = [runtime, 'eval', bootstrap + harness]
+        else:
+            bootstrap = "const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));\n"
+            command = [runtime, '-e', bootstrap + harness]
+        result = subprocess.run(command, input=json.dumps({'data': data, 'script': script, 'cases': cases}),
+                                text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def test_generated_search_matches_individual_tags_and_existing_fields(self):
+        self.bookmark('tagged.html', metadata={'title': 'TitleNeedle', 'uploader': 'ChannelNeedle',
+                                             'description': 'DescriptionNeedle'})
+        self.bookmark('untagged.html', 'BBBBBBBBBBB')
+        self.catalog({'AAAAAAAAAAA': {'tags': [' Research ', 'Machine Learning', 'Alpha', 'Beta']}})
+        self.assertEqual(self.run_index()[0], 0)
+        queries = ['research', 'RESEARCH', '  seARch  ', 'learning', 'alpha', 'beta',
+                   'titleneedle', 'channelneedle', 'descriptionneedle', 'aaaaaaa',
+                   'alpha beta', 'unmatched', '', '   ']
+        results = self.browser_results([{'query': query} for query in queries])
+        self.assertEqual(len(results[0]['hrefs']), 2)
+        for query, result in zip(queries, results[1:]):
+            with self.subTest(query=query):
+                expected = [] if query in ('alpha beta', 'unmatched') else (
+                    ['bookmarks/tagged.html', 'bookmarks/untagged.html'] if not query.strip()
+                    else ['bookmarks/tagged.html'])
+                self.assertEqual(result['hrefs'], expected)
+                self.assertEqual(result['count'], f'Showing {len(expected)} of 2 bookmarks')
+                self.assertEqual(result['emptyHidden'], bool(expected))
+
+    def test_generated_search_handles_missing_and_empty_tags(self):
+        self.bookmark('missing.html')
+        self.bookmark('empty.html', 'BBBBBBBBBBB')
+        self.bookmark('null.html', 'CCCCCCCCCCC')
+        self.assertEqual(self.run_index()[0], 0)
+        # Missing catalogs already produce []; also exercise absent/null array guards.
+        results = self.browser_results([{'query': 'synthetic'}, {'query': 'tag-only'}, {'query': ''}],
+                                       {'AAAAAAAAAAA': {}, 'CCCCCCCCCCC': {'personalTags': None}})
+        self.assertEqual([len(result['hrefs']) for result in results], [3, 3, 0, 3])
+        self.assertEqual(results[2]['count'], 'Showing 0 of 3 bookmarks')
+        self.assertFalse(results[2]['emptyHidden'])
+
+    def test_generated_tag_search_preserves_channels_sorting_counts_and_hidden_exclusion(self):
+        for name, identity, title, channel, uploaded in (
+                ('one', 'AAAAAAAAAAA', 'Zulu', 'Shared', '20260101'),
+                ('two', 'BBBBBBBBBBB', 'Alpha', 'Shared', '20260103'),
+                ('single', 'CCCCCCCCCCC', 'Middle', 'Solo', '20260102'),
+                ('hidden', 'DDDDDDDDDDD', 'HiddenTitle', 'HiddenChannel', '20260104')):
+            self.bookmark(name + '.html', identity, metadata={
+                'title': title, 'uploader': channel, 'upload_date': uploaded})
+        self.catalog({identity: {'tags': tags} for identity, tags in (
+            ('AAAAAAAAAAA', ['Topic', 'hidden-topic']), ('BBBBBBBBBBB', ['Topic']),
+            ('CCCCCCCCCCC', ['Topic', 'unhidden']),
+            ('DDDDDDDDDDD', [' HiDdEn ', 'Topic', 'HiddenExclusiveTag']))})
+        self.assertEqual(self.run_index()[0], 0)
+        cases = [
+            {'query': 'topic', 'channel': 'Shared', 'control': 'channel'},
+            {'query': 'topic', 'channel': '__single_entries__', 'control': 'channel'},
+            *[{'query': 'topic', 'sort': sort, 'control': 'sort'} for sort in
+              ('upload-desc', 'upload-asc', 'title-asc', 'title-desc', 'channel-asc')],
+            {'query': 'HiddenExclusiveTag'}, {'query': 'HiddenTitle'},
+            {'query': 'DDDDDDDDDDD'}, {'query': 'hidden'},
+        ]
+        results = self.browser_results(cases)
+        orders = [['two', 'single', 'one'], ['two', 'one'], ['single'],
+                  ['two', 'single', 'one'], ['one', 'single', 'two'],
+                  ['two', 'single', 'one'], ['one', 'single', 'two'],
+                  ['one', 'two', 'single'], [], [], [], ['single', 'one']]
+        for result, order in zip(results, orders):
+            self.assertEqual(result['hrefs'], [f'bookmarks/{name}.html' for name in order])
+            self.assertEqual(result['count'], f'Showing {len(order)} of 3 bookmarks')
+            self.assertEqual(result['emptyHidden'], bool(order))
+            self.assertEqual(result['stats'], '3 bookmarks · 2 channels')
+            self.assertEqual(result['channels'], ['__single_entries__', 'Shared'])
 
     def test_missing_catalog_and_empty_records_yield_no_personal_tags(self):
         self.bookmark()
@@ -544,12 +678,14 @@ class CatalogIndexTests(unittest.TestCase):
         self.assertEqual(parser.color_schemes, ['dark'])
         self.assertIn('color:#e9edf4;background:#101217', css)
         render = script.split('function render()', 1)[1]
-        self.assertNotIn('personalTags', render)
-        self.assertIn('[x.title, x.channel, x.description, x.id]', render)
+        self.assertIn('Array.isArray(x.personalTags)', render)
+        self.assertIn('[x.title, x.channel, x.description, x.id,', render)
         self.assertIn("c === '__single_entries__'", render)
         self.assertIn('channelCounts.get(x.channel) === 1', render)
         self.assertIn('switch(s)', render)
         self.assertIn('<option value="">All Channels</option>', self.output.read_text())
+        self.assertIn('placeholder="Search titles, channels, descriptions, personal tags…"',
+                      self.output.read_text())
 
     def test_build_only_writes_index_not_bookmarks_or_catalog(self):
         bookmark = self.bookmark()
