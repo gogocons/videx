@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 from test_videx_inventory import snapshot
 from test_bookmark_tag import duplicate_catalog_documents
+from test_bookmark_generate import numeric_cli_documents, numeric_metadata_documents, strict_json_loads
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -413,6 +414,97 @@ class FilesystemConsumerTests(unittest.TestCase):
         self.assertEqual(snapshot(self.root), before)
 
 
+class NumericMetadataConsumerTests(unittest.TestCase):
+    setUp = ConsumerTests.setUp
+    cli = FilesystemConsumerTests.cli
+
+    def test_generator_cli_rejects_new_and_refresh_numeric_errors_without_writes(self):
+        info, thumbnail = self.root / 'info.json', self.root / 'thumb.png'
+        thumbnail.write_bytes(b'image')
+        output = self.collection / 'renamed.html'
+        (self.root / 'catalog.json.bak-existing').write_bytes(b'backup sentinel')
+        (self.root / 'index.html').write_bytes(b'index sentinel')
+        for label, raw in numeric_metadata_documents(A):
+            info.write_text(raw)
+            for exists in (False, True):
+                if output.exists():
+                    output.unlink()
+                if exists:
+                    output.write_text(document(A))
+                    output.chmod(0o640)
+                before = snapshot(self.root)
+                with self.subTest(label=label, exists=exists):
+                    result = self.cli('yt-bookmark-generate.py', info, thumbnail, output)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(label.split('/')[0], result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+                    self.assertEqual(snapshot(self.root), before)
+
+    def test_upgrade_skips_numeric_pages_and_backs_up_only_valid_candidates(self):
+        for number, (label, raw) in enumerate(numeric_cli_documents(B)):
+            library = self.root / f'case-{number}'
+            collection = library / 'bookmarks'
+            collection.mkdir(parents=True)
+            good, bad = collection / 'good.html', collection / 'bad.html'
+            good.write_text(document(A))
+            bad.write_text('<img src="' + IMAGE + '"><script id="youtube-metadata">' + raw + '</script>')
+            bad.chmod(0o640)
+            (library / 'index.html').write_bytes(b'old index')
+            (library / 'catalog.json').write_bytes(b'catalog sentinel; upgrade must not read this')
+            backup_sentinel = library / 'bookmarks-backup-existing'
+            backup_sentinel.mkdir()
+            (backup_sentinel / 'keep').write_bytes(b'keep backup')
+            before = snapshot(library)
+            original = good.read_bytes()
+            with self.subTest(label=label):
+                dry = self.cli('yt-bookmark-upgrade.py', library)
+                self.assertEqual(dry.returncode, 0, dry.stderr)  # Preserve F7 mixed-result behavior.
+                self.assertIn('1 skipped', dry.stdout)
+                self.assertIn('SKIP bad.html:', dry.stderr)
+                self.assertEqual(snapshot(library), before)
+                applied = self.cli('yt-bookmark-upgrade.py', library, '--apply')
+                self.assertEqual(applied.returncode, 0, applied.stderr)
+                self.assertIn('SKIP bad.html:', applied.stderr)
+                self.assertNotIn('Traceback', applied.stderr)
+                after = snapshot(library)
+                for name, state in before.items():
+                    if name not in ('.', 'bookmarks', 'bookmarks/good.html'):
+                        self.assertEqual(after[name], state)
+                self.assertNotEqual(good.read_bytes(), original)
+                backup, = [path for path in library.glob('bookmarks-backup-*') if path != backup_sentinel]
+                self.assertEqual([path.name for path in backup.rglob('*')], ['good.html'])
+                self.assertEqual((backup / 'good.html').read_bytes(), original)
+                self.assertFalse(list(library.rglob('*.tmp')))
+        good.unlink()
+        before = snapshot(library)
+        for options in ([], ['--apply']):
+            result = self.cli('yt-bookmark-upgrade.py', library, *options)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(snapshot(library), before)
+
+    def test_finite_numeric_metadata_survives_generator_and_upgrade(self):
+        values = {'id': A, 'title': 'Title', 'duration': 61.75, 'timestamp': -0.5,
+                  'view_count': 2**60 + 1, 'like_count': False,
+                  'chapters': [{'start_time': 1.25, 'end_time': 1e308, 'extra': {'kept': True}}],
+                  'formats': [{'ignored': float('nan')}]}
+        info, thumbnail = self.root / 'info.json', self.root / 'thumb.png'
+        info.write_text(json.dumps(values))
+        thumbnail.write_bytes(b'image')
+        output = self.collection / 'renamed.html'
+        generated = self.cli('yt-bookmark-generate.py', info, thumbnail, output)
+        self.assertEqual(generated.returncode, 0, generated.stderr)
+        parser = upgrader.ArchiveParser()
+        parser.feed(output.read_text())
+        saved = strict_json_loads(''.join(parser.metadata))
+        self.assertEqual(saved, metadata_tool.curate(values))
+        self.assertEqual(saved['duration'], 61.75)
+        self.assertEqual(saved['chapters'], values['chapters'])
+        before = snapshot(self.root)
+        dry = self.cli('yt-bookmark-upgrade.py', self.root)
+        self.assertEqual(dry.returncode, 0, dry.stderr)
+        self.assertEqual(snapshot(self.root), before)
+
+
 class CaptureTests(unittest.TestCase):
     def setUp(self):
         fixture = tempfile.TemporaryDirectory(prefix='.capture-test-', dir=PROJECT)
@@ -636,6 +728,25 @@ if os.environ.get('VIDEX_FIXTURE_BAD_CATALOG'):
                     self.assertFalse((self.root / 'extractor-called').exists())
                     self.assertEqual(snapshot(self.library), before)
 
+    def test_numeric_extractor_errors_refuse_capture_and_refresh_before_tagging(self):
+        existing = self.collection / 'renamed.html'
+        existing.write_text(document(A))
+        existing.chmod(0o640)
+        (self.library / 'catalog.json').write_text(json.dumps({
+            'version': 1, 'bookmarks': {A: {'tags': ['keep']}}, 'collections': {}}))
+        (self.library / 'catalog.json.bak-existing').write_bytes(b'backup sentinel')
+        (self.library / 'index.html').write_bytes(b'index sentinel')
+        for identity, extra in ((C, []), (A, ['--overwrite', '--apply'])):
+            self.environment['VIDEX_FIXTURE_ID'] = json.dumps(identity)
+            for label, raw in numeric_cli_documents(identity):
+                self.environment['VIDEX_FIXTURE_RAW_METADATA'] = raw
+                before = snapshot(self.library)
+                with self.subTest(identity=identity, label=label):
+                    result = self.capture('https://youtu.be/' + identity, *extra)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+                    self.assertEqual(snapshot(self.library), before)
+                    self.assertEqual(list((self.root / 'tmp').iterdir()), [])
 
     def test_tagged_capture_rechecks_catalog_after_extraction(self):
         existing = self.collection / 'renamed.html'

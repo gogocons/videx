@@ -17,14 +17,15 @@ from urllib.parse import quote, urlsplit
 from videx_identity import bookmark_identity, loads_metadata, resolve_identity
 
 
-def load_curator():
+def load_metadata_helpers():
     spec = spec_from_file_location('bookmark_metadata', Path(__file__).with_name('yt-bookmark-metadata.py'))
     module = module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.curate
+    return module
 
 
-curate = load_curator()
+metadata_helpers = load_metadata_helpers()
+curate = metadata_helpers.curate
 
 
 def esc(value):
@@ -32,7 +33,8 @@ def esc(value):
 
 
 def duration(seconds):
-    if not isinstance(seconds, (int, float)) or seconds < 0:
+    seconds = metadata_helpers.display_seconds(seconds)
+    if seconds is None:
         return 'Unknown'
     n = int(seconds)
     h, rem = divmod(n, 3600)
@@ -97,19 +99,19 @@ def make_document(metadata, image_uri, back_href=None):
         for ch in chapters:
             if not isinstance(ch, dict):
                 continue
-            start = ch.get('start_time')
+            start = metadata_helpers.display_seconds(ch.get('start_time'))
             label = str(ch.get('title') or 'Untitled chapter')
-            if isinstance(start, (int, float)) and start >= 0:
+            if start is not None:
                 sep = '&' if '?' in url else '?'
                 href = url + sep + 't=' + str(int(start)) if url else ''
                 stamp = duration(start)
                 chapter_rows.append(f'<li><a href="{esc(href)}" target="_blank" rel="noopener noreferrer">{esc(stamp)} — {esc(label)}</a></li>' if href else f'<li>{esc(stamp)} — {esc(label)}</li>')
     fields = [('Duration', duration(metadata.get('duration'))), ('Uploaded', upload_date(metadata.get('upload_date'))),
               ('Video ID', video_id or 'Unknown'), ('Channel', uploader),
-              ('Views at capture', f"{metadata['view_count']:,}" if isinstance(metadata.get('view_count'), int) else 'Unavailable'),
-              ('Likes at capture', f"{metadata['like_count']:,}" if isinstance(metadata.get('like_count'), int) else 'Unavailable')]
+              ('Views at capture', f"{metadata['view_count']:,}" if type(metadata.get('view_count')) is int else 'Unavailable'),
+              ('Likes at capture', f"{metadata['like_count']:,}" if type(metadata.get('like_count')) is int else 'Unavailable')]
     info = ''.join(f'<div class="stat"><span>{esc(k)}</span><strong>{esc(v)}</strong></div>' for k,v in fields)
-    raw = json.dumps(metadata, ensure_ascii=False, indent=2).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
+    raw = json.dumps(metadata, ensure_ascii=False, indent=2, allow_nan=False).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
     # HTML recognizes script end tags even inside JavaScript string literals.
     clipboard_url = json.dumps(url).replace('<', '\\u003c')
     library = f'<a class="secondary" href="{esc(back_href)}">← Back to library</a>' if back_href else ''
@@ -161,7 +163,7 @@ def write_atomic(output, content):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__,
-        epilog='Existing bookmark destinations must be regular files; symlinks and special files are rejected with status 2 before reading or staging output.')
+        epilog='Existing bookmark destinations must be regular files; symlinks and special files are rejected with status 2 before reading or staging output. Non-finite or browser-overflowing archival numbers also return 2 before publication. Display-unsafe finite durations and chapter times are retained but displayed as unavailable.')
     p.add_argument('info_json', type=Path)
     p.add_argument('thumbnail', type=Path)
     p.add_argument('output', type=Path)
@@ -178,7 +180,10 @@ def main():
     metadata = loads_metadata(args.info_json.read_text(encoding='utf-8'))
     mime = mimetypes.guess_type(args.thumbnail.name)[0] or 'application/octet-stream'
     image_uri = f'data:{mime};base64,' + base64.b64encode(args.thumbnail.read_bytes()).decode('ascii')
-    document = make_document(metadata, image_uri, args.back_link)
+    try:
+        document = make_document(metadata, image_uri, args.back_link)
+    except ValueError as exc:
+        p.error(f'Cannot build bookmark: {exc}')
     video_id = resolve_identity(args.output.name, document)
     if previous is not None:
         try:

@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 from test_videx_inventory import inventory as bookmark_filesystem
 from test_bookmark_tag import duplicate_catalog_documents
+from test_bookmark_generate import numeric_metadata_documents
 
 PROJECT = Path(__file__).resolve().parents[1]
 with patch.object(sys, 'path', [str(PROJECT / 'scripts')] + sys.path):
@@ -478,6 +479,23 @@ class LookupArgumentBoundaryTests(unittest.TestCase):
         self.assertEqual(payload['summary']['mismatches'], 1)
         self.assertIsNone(payload['bookmarks'][0]['tags'])
         self.assertEqual(self.snapshot(), before)
+
+    def test_numeric_presentation_errors_do_not_change_lookup_or_json_audit(self):
+        path = self.add('renamed.html', A)
+        (self.root / 'catalog.json').write_text(json.dumps({
+            'version': 1, 'bookmarks': {A: {'tags': ['keep']}}, 'collections': {}}))
+        for label, raw in numeric_metadata_documents(A):
+            path.write_text('<script id="youtube-metadata">' + raw + '</script>')
+            before = self.snapshot()
+            with self.subTest(label=label):
+                lookup = self.run_cli('--id=' + A)
+                self.assertEqual((lookup.returncode, lookup.stdout), (0, str(path) + '\n'))
+                audit = self.run_cli('--audit', '--show-tags', '--json')
+                self.assertEqual(audit.returncode, 0, audit.stderr)
+                payload = json.loads(audit.stdout)
+                self.assertEqual(payload['issues'], [])
+                self.assertEqual(payload['bookmarks'], [{'id': A, 'paths': [str(path)], 'tags': ['keep']}])
+                self.assertEqual(self.snapshot(), before)
 
 
 if __name__ == '__main__':

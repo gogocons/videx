@@ -17,6 +17,7 @@ import unittest
 from unittest.mock import patch
 from test_videx_inventory import snapshot
 from test_bookmark_tag import duplicate_catalog_documents
+from test_bookmark_generate import assert_browser_json, numeric_metadata_documents, strict_json_loads
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -736,6 +737,74 @@ console.log(JSON.stringify(results));
                 self.assertEqual(self.run_index()[0], 2)
                 writer.assert_not_called()
             self.assertEqual(snapshot(self.root), before)
+
+    def test_malformed_archival_numbers_skip_without_changing_sources(self):
+        good = self.bookmark()
+        bad = self.collection / 'bad.html'
+        self.catalog({'AAAAAAAAAAA': {'tags': ['Topic']}, 'BBBBBBBBBBB': {'tags': ['hidden']}})
+        for label, raw in numeric_metadata_documents('BBBBBBBBBBB'):
+            with self.subTest(label=label):
+                bad.write_text('<script id="youtube-metadata">' + raw + '</script>')
+                bad.chmod(0o640)
+                before = {path: (path.stat().st_mode, path.stat().st_mtime_ns, path.read_bytes())
+                          for path in (good, bad, self.root / 'catalog.json')}
+                status, stdout, stderr = self.run_index()
+                self.assertEqual(status, 0, stderr)
+                self.assertIn('Indexed 1 bookmarks (1 skipped)', stdout)
+                self.assertIn('bad.html', stderr)
+                self.assertEqual([item['id'] for item in self.parsed_output()[0]['items']], ['AAAAAAAAAAA'])
+                self.assertEqual({path: (path.stat().st_mode, path.stat().st_mtime_ns, path.read_bytes())
+                                  for path in before}, before)
+                self.assert_no_staging_files()
+        good.unlink()
+        self.output.write_bytes(b'preserve all-invalid index')
+        before = snapshot(self.root)
+        with patch.object(indexer, 'write_index_atomic') as writer:
+            self.assertEqual(self.run_index()[0], 1)
+            writer.assert_not_called()
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_display_projection_and_all_hidden_numeric_compatibility(self):
+        for value in (None, True, False, '120', -1, -0.25, 0, 61.75, 2**53 - 1, 2**53, 1e308):
+            self.bookmark(metadata={'duration': value, 'title': None, 'formats': [{'ignored': float('nan')}]})
+            self.assertEqual(self.run_index()[0], 0)
+            item = self.parsed_output()[0]['items'][0]
+            expected = value if type(value) in (int, float) and 0 <= value <= 2**53 - 1 else None
+            self.assertEqual(item['duration'], expected)
+            self.assertEqual(item['title'], 'renamed')
+        self.catalog({'AAAAAAAAAAA': {'tags': ['hidden']}})
+        self.bookmark('bad.html', 'BBBBBBBBBBB', metadata={'timestamp': float('inf')})
+        status, stdout, _ = self.run_index()
+        self.assertEqual(status, 0)
+        self.assertIn('Indexed 0 bookmarks (1 skipped)', stdout)
+        self.assertEqual(self.parsed_output()[0]['items'], [])
+
+    def test_final_json_serialization_failure_preserves_every_existing_file(self):
+        self.bookmark()
+        self.output.write_bytes(b'existing index sentinel')
+        self.output.chmod(0o640)
+        before = snapshot(self.root)
+        real_parser = indexer.parse_bookmark
+        for value in (float('nan'), float('inf'), -float('inf')):
+            def parse(*arguments):
+                item = real_parser(*arguments)
+                item['duration'] = value
+                return item
+            with patch.object(indexer, 'parse_bookmark', side_effect=parse), \
+                    patch.object(indexer, 'write_index_atomic') as writer:
+                status, _, stderr = self.run_index()
+                self.assertEqual(status, 2)
+                self.assertIn('Cannot serialize index JSON', stderr)
+                writer.assert_not_called()
+            self.assertEqual(snapshot(self.root), before)
+
+    def test_actual_javascript_parses_finite_index_payload(self):
+        self.bookmark(metadata={'duration': 61.75, 'timestamp': sys.float_info.max})
+        self.assertEqual(self.run_index()[0], 0)
+        _, parser = self.parsed_output()
+        raw = next(script['text'] for script in parser.scripts if script['attrs'].get('id') == 'bookmark-data')
+        self.assertEqual(strict_json_loads(raw)['items'][0]['duration'], 61.75)
+        assert_browser_json(self, raw)
 
 
 if __name__ == '__main__':

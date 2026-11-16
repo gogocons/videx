@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
+from test_bookmark_generate import numeric_metadata_documents
 
 with patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / 'scripts')] + sys.path):
     from videx_identity import IdentityError, loads_metadata, resolve_identity, valid_id
@@ -15,6 +16,12 @@ def embedded(payload):
 
 
 class IdentityTests(unittest.TestCase):
+    def test_numeric_presentation_validation_does_not_change_identity_decoding(self):
+        for label, raw in numeric_metadata_documents(A):
+            with self.subTest(label=label):
+                self.assertEqual(loads_metadata(raw)['id'], A)
+                self.assertEqual(resolve_identity('renamed.html', embedded(raw)), A)
+
     def test_repeated_id_keys_are_rejected_even_when_values_match(self):
         for second in (A, B):
             payload = '{"id":"' + A + '","id":"' + second + '"}'

@@ -35,6 +35,12 @@ live_status, was_live, age_limit, license
 
 These are curated archival fields, not a complete extractor manifest. Streaming URLs, format lists, and automatic-caption manifests are omitted; those manifests are not subtitle transcripts. Metadata `tags` are extractor/source tags, distinct from personal catalog tags. Historical counts and metadata reflect capture time rather than live values. The schema marker does not imply that every reader enforces a full formal schema.
 
+Retained archival fields are checked recursively for numeric browser compatibility, including nested arrays and unknown members inside retained objects. `NaN`, positive/negative infinity, exponent overflow that decodes to infinity, and integers outside the browser's finite numeric range are rejected rather than replaced or omitted. Irrelevant top-level extractor fields outside the allowlist remain ignored. Valid finite archival values retain their existing types and values; null top-level fields remain omitted by curation. Catalog numeric rules and identity-oriented metadata decoding are separate from this validation.
+
+Duration and chapter display accepts nonnegative finite integer/float seconds up to `2**53 - 1`. Booleans, numeric strings, negative seconds, and larger finite values are unavailable for display; unsuitable chapters are omitted from the chapter list. Finite fractional values remain in metadata and index data, with truncation only for displayed timestamps and chapter links. Displayed integer counts exclude booleans. These display rules do not rewrite retained finite metadata. Integers above JavaScript's exact-integer range but within its finite range retain historical numeric representation; exact browser round-tripping of those integers is not promised.
+
+Both standalone embedded archival metadata and index payloads use strict JSON serialization (`allow_nan=False`) followed by the existing HTML-script escaping. Numeric compatibility checks do not change metadata schema 2, require a title for otherwise-supported index fallbacks, or change the identity and duplicate-member rules below.
+
 ## Catalog schema 1
 
 A minimal catalog has this structure:

@@ -18,6 +18,16 @@ from videx_config import default_library
 from videx_identity import loads_metadata, resolve_identity
 from videx_inventory import read_bookmark_text, scan_bookmarks
 
+
+def load_metadata_helpers():
+    spec = spec_from_file_location('bookmark_metadata', Path(__file__).with_name('yt-bookmark-metadata.py'))
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+metadata_helpers = load_metadata_helpers()
+
 try:
     from PIL import Image, ImageOps
 except ImportError:
@@ -80,9 +90,8 @@ def parse_bookmark(path, root, width, library_root):
     metadata = loads_metadata(''.join(parser.metadata_chunks))
     if not isinstance(metadata, dict):
         raise ValueError('metadata is not an object')
-    duration = metadata.get('duration')
-    if not isinstance(duration, (int, float)) or duration < 0:
-        duration = None
+    metadata_helpers.validate_archival_numbers(metadata)
+    duration = metadata_helpers.display_seconds(metadata.get('duration'))
     uploaded = metadata.get('upload_date') or ''
     if not re.fullmatch(r'\d{8}', str(uploaded)):
         uploaded = ''
@@ -266,7 +275,7 @@ def load_catalog_tags(library_root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
-        epilog='Personal catalog tags are included automatically. Rebuilding excludes bookmarks tagged hidden from index data, search, channels, and counts. This is an organizational visibility control, not a security feature. Invalid catalogs or bookmark filesystem failures return status 2 and leave the existing index untouched. Bookmark symlinks and special files are rejected without reading; malformed regular pages are skipped.')
+        epilog='Personal catalog tags are included automatically. Rebuilding excludes bookmarks tagged hidden from index data, search, channels, and counts. This is an organizational visibility control, not a security feature. Invalid catalogs or bookmark filesystem failures return status 2 and leave the existing index untouched. Bookmark symlinks and special files are rejected without reading; malformed regular pages, including non-finite or browser-overflowing archival numbers, are skipped. Final JSON serialization failures return 2 without publication.')
     parser.add_argument(
     'directory',
     nargs='?',
@@ -337,7 +346,12 @@ def main():
     if not valid_count:
         print('ERROR: No valid bookmarks found; existing index left untouched.', file=sys.stderr)
         return 1
-    payload = json.dumps({'generatedAt': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'), 'items': items}, ensure_ascii=False, separators=(',', ':'))
+    try:
+        payload = json.dumps({'generatedAt': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'), 'items': items},
+                             ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(f'ERROR: Cannot serialize index JSON: {exc}; existing index left untouched.', file=sys.stderr)
+        return 2
     # Escape < so user-supplied metadata cannot terminate the JSON script element.
     payload = payload.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
     html = HTML_TEMPLATE.replace('__BOOKMARK_DATA__', payload)

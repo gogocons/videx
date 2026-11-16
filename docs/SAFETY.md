@@ -34,6 +34,8 @@ Capture stops on unsafe lookup failure. It checks the extractor's resolved ID an
 
 The generator rejects existing symlink, directory, or special-file bookmark destinations with controlled status `2`, before reading them or staging output. New destinations and matching regular-file refreshes remain supported.
 
+Malformed retained numeric metadata (non-finite values or browser-overflowing integers) makes generator document construction fail with controlled status `2` before publication. Capture propagates this failure without publishing a bookmark or applying its requested tags. Existing bookmarks, catalogs, indexes, and backups remain unchanged; initial library-directory creation and extractor temporary work retain their existing behavior. Finite values unsuitable only for duration/chapter display are retained, not silently repaired. See [numeric metadata policy](DATA_FORMATS.md#bookmark-metadata-schema-2).
+
 Capture, tagging, and indexing are separate steps, not a transaction across all files. A later tagging or index failure does not imply that an earlier bookmark write was rolled back. Capture refresh does not create the timestamped backups supplied by offline upgrade; retain independent library backups.
 
 ## Catalog validation and publication
@@ -51,6 +53,8 @@ Index generation writes a unique temporary file beside `index.html`, then atomic
 Rebuild the index after adding or removing `hidden` to apply visibility changes. When valid bookmarks exist but all are hidden, rebuilding succeeds and replaces any older index with an empty-state index. A genuinely empty library or one containing no valid bookmarks retains exit status `1` and leaves any existing index untouched. Malformed, unreadable, symlinked, or non-regular catalogs cause exit status `2` before index writing, even when no valid bookmarks exist, leaving any existing index and its permissions untouched.
 
 Index builds return `2` without replacing the existing index when filesystem inspection fails, including unreadable files, unavailable subdirectories, disappearing files, or unsupported objects. Malformed or conflicting regular HTML pages are warned about and skipped; a build with other valid pages can succeed. Successful builds return `0`. Invalid arguments use argparse status `2`.
+
+Non-finite or browser-overflowing numbers in retained archival fields are malformed page content: index builds warn and skip those pages, without changing the sources. Mixed valid/malformed inputs can still publish with status `0`; all-invalid inputs retain status `1` and preserve the old index. All-hidden valid inputs still publish an empty index. A failure of the final strict JSON serialization returns `2` before atomic publication, preserving the old index. Identity lookup and reports remain independent of numeric presentation validation.
 
 The [visibility cautions](USAGE.md#rebuild-and-browse-the-offline-index) still apply: `hidden` is no access control, older copies may expose entries, and a failed rebuild leaves the old snapshot intact.
 
@@ -76,6 +80,8 @@ Partial tag reports use `Inspected unique IDs (partial)` and `Unverified catalog
 ## Offline upgrades
 
 Upgrade validates bookmark filesystem access before creating backups or replacing pages. Unsupported objects, enumeration/stat failures, unreadable files, and disappearing files return `2` without changes from that validation phase. Malformed or conflicting regular pages are warned about and skipped, including legacy pages without required embedded metadata/thumbnail content.
+
+This content-skip behavior also covers rejected archival numbers. Invalid numeric pages are left unchanged and are not added to backup/replacement candidates. Other valid pages remain eligible, with the same mixed-result exit statuses below; numeric validation does not introduce an all-library transaction or automatic source normalization.
 
 All candidate originals are copied to a timestamped sibling `<bookmarks-directory-name>-backup-<timestamp>` folder before any replacement. The generator stages each rebuilt page in a unique sibling `.bookmark-*.tmp` file and replaces it atomically. This is per-file publication, not an all-library transaction.
 
