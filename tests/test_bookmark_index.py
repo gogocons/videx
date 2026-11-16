@@ -217,13 +217,18 @@ class CatalogIndexTests(unittest.TestCase):
 
     assert_no_staging_files = IndexWriteTests.assert_no_staging_files
 
-    def bookmark(self, name='renamed.html', identity='AAAAAAAAAAA', collection=None):
+    def bookmark(self, name='renamed.html', identity='AAAAAAAAAAA', collection=None,
+                 metadata=None, thumbnail=None):
         path = (collection or self.collection) / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('<script id="youtube-metadata">' + json.dumps({
+        values = {
             'id': identity, 'title': 'Synthetic title', 'uploader': 'Synthetic channel',
             'description': 'Synthetic description', 'upload_date': '20260102',
-        }) + '</script>', encoding='utf-8')
+        }
+        values.update(metadata or {})
+        image = f'<img src="{thumbnail}">' if thumbnail else ''
+        path.write_text(image + '<script id="youtube-metadata">' + json.dumps(values)
+                        + '</script>', encoding='utf-8')
         return path
 
     def catalog(self, records, library=None):
@@ -259,15 +264,153 @@ class CatalogIndexTests(unittest.TestCase):
     def test_validated_case_sensitive_ids_and_orphans(self):
         self.bookmark(identity='AAAAAAAAAAA')
         self.bookmark('lowercase.html', 'aaaaaaaaaaa')
-        self.catalog({'AAAAAAAAAAA': {'tags': [' Python ', 'python', 'HIDDEN']},
+        self.catalog({'AAAAAAAAAAA': {'tags': [' Python ', 'python', 'Research']},
                       'aaaaaaaaaaa': {'tags': ['lowercase']},
                       'BBBBBBBBBBB': {'tags': ['orphan-only']}})
         self.assertEqual(self.run_index()[0], 0)
         items = {item['id']: item for item in self.parsed_output()[0]['items']}
-        self.assertEqual(items['AAAAAAAAAAA']['personalTags'], ['Python', 'hidden'])
+        self.assertEqual(items['AAAAAAAAAAA']['personalTags'], ['Python', 'Research'])
         self.assertEqual(items['aaaaaaaaaaa']['personalTags'], ['lowercase'])
         self.assertNotIn('BBBBBBBBBBB', items)
         self.assertNotIn('orphan-only', self.output.read_text())
+
+    def test_hidden_records_are_absent_from_entire_html_and_sources_are_preserved(self):
+        visible = self.bookmark('visible.html', 'aaaaaaaaaaa')
+        thumbnail = 'data:image/png;base64,U3ludGhldGljSGlkZGVuVGh1bWJuYWls'
+        markers = ['HiddenExclusiveTitle', 'HiddenExclusiveChannel', 'HiddenExclusiveDescription',
+                   'https://example.invalid/HiddenExclusiveURL', 'HiddenExclusiveTag',
+                   'AAAAAAAAAAA', 'hidden-exclusive.html', thumbnail,
+                   thumbnail.split(',', 1)[1]]
+        hidden = self.bookmark('hidden-exclusive.html', metadata={
+            'title': markers[0], 'uploader': markers[1], 'description': markers[2],
+            'webpage_url': markers[3],
+        }, thumbnail=thumbnail)
+        catalog = self.catalog({'AAAAAAAAAAA': {'tags': ['hidden', markers[4]]},
+                                'aaaaaaaaaaa': {'tags': ['VisibleTag']}})
+        sources = (visible, hidden, catalog)
+        before = {path: (path.read_bytes(), path.stat().st_mode) for path in sources}
+        directories = sorted(path.relative_to(self.root) for path in self.root.rglob('*') if path.is_dir())
+        status, stdout, _ = self.run_index()
+        self.assertEqual(status, 0)
+        self.assertIn('Indexed 1 bookmarks (0 skipped)', stdout)
+        self.assertEqual([item['id'] for item in self.parsed_output()[0]['items']], ['aaaaaaaaaaa'])
+        html = self.output.read_text()
+        for marker in markers:
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, html)
+        self.assertIn('VisibleTag', html)
+        self.assertEqual({path: (path.read_bytes(), path.stat().st_mode) for path in sources}, before)
+        self.assertEqual(sorted(path.relative_to(self.root) for path in self.root.rglob('*') if path.is_dir()),
+                         directories)
+        self.assertEqual(set(self.root.rglob('*')), {self.collection, self.output, *sources})
+        self.assert_no_staging_files()
+
+    def test_hidden_tag_normalization_and_exact_match(self):
+        self.bookmark()
+        for tags in (['hidden'], ['HIDDEN'], ['  HiDdEn  '], ['Hidden', 'hidden', 'topic']):
+            with self.subTest(tags=tags):
+                self.catalog({'AAAAAAAAAAA': {'tags': tags}})
+                self.assertEqual(self.run_index()[0], 0)
+                self.assertEqual(self.parsed_output()[0]['items'], [])
+        for tags in (['hidden-topic'], ['unhidden'], ['hid den']):
+            with self.subTest(tags=tags):
+                self.catalog({'AAAAAAAAAAA': {'tags': tags}})
+                self.assertEqual(self.run_index()[0], 0)
+                self.assertEqual(self.parsed_output()[0]['items'][0]['personalTags'], tags)
+
+    def test_channels_and_counts_use_only_visible_bookmarks(self):
+        for name, identity, channel in (
+                ('shared-visible.html', 'AAAAAAAAAAA', 'SharedChannel'),
+                ('shared-hidden.html', 'BBBBBBBBBBB', 'SharedChannel'),
+                ('hidden-only.html', 'CCCCCCCCCCC', 'HiddenOnlyChannel'),
+                ('multiple-one.html', 'DDDDDDDDDDD', 'MultipleChannel'),
+                ('multiple-two.html', 'EEEEEEEEEEE', 'MultipleChannel')):
+            self.bookmark(name, identity, metadata={'uploader': channel})
+        self.catalog({identity: {'tags': ['hidden']} for identity in ('BBBBBBBBBBB', 'CCCCCCCCCCC')})
+        self.assertEqual(self.run_index()[0], 0)
+        data, parser = self.parsed_output()
+        items = data['items']
+        counts = {item['channel']: sum(other['channel'] == item['channel'] for other in items)
+                  for item in items}
+        self.assertEqual(len(items), 3)
+        self.assertEqual(counts, {'SharedChannel': 1, 'MultipleChannel': 2})
+        self.assertNotIn('HiddenOnlyChannel', self.output.read_text())
+        script, = [s['text'] for s in parser.scripts if s['attrs'].get('id') != 'bookmark-data']
+        # All browser channel options and totals derive from the filtered payload.
+        for expression in ('const items=data.items;', 'for (const item of items)',
+                           'const channels = [...channelCounts.keys()]',
+                           'if (channelCounts.get(name) < 2) continue;',
+                           'channelCounts.get(x.channel) === 1',
+                           '${items.length.toLocaleString()}', '${channels.length.toLocaleString()}'):
+            self.assertIn(expression, script)
+
+    def test_all_hidden_publishes_empty_index_with_or_without_old_index_and_invalid_files(self):
+        self.bookmark()
+        self.catalog({'AAAAAAAAAAA': {'tags': ['hidden']}})
+        for existing, invalid in ((False, False), (True, False), (True, True)):
+            with self.subTest(existing=existing, invalid=invalid):
+                if existing:
+                    self.output.write_text('PreviouslyVisibleSentinel')
+                    self.output.chmod(0o640)
+                if invalid:
+                    (self.collection / 'invalid.html').write_text('not a bookmark')
+                status, stdout, stderr = self.run_index()
+                self.assertEqual(status, 0)
+                self.assertIn(f'Indexed 0 bookmarks ({int(invalid)} skipped)', stdout)
+                self.assertEqual(self.parsed_output()[0]['items'], [])
+                html = self.output.read_text()
+                self.assertNotIn('PreviouslyVisibleSentinel', html)
+                self.assertNotIn('Synthetic title', html)
+                self.assertIn('No matching bookmarks found.', html)
+                if existing:
+                    self.assertEqual(stat.S_IMODE(self.output.stat().st_mode), 0o640)
+                if invalid:
+                    self.assertIn('Skipping invalid.html', stderr)
+                self.assert_no_staging_files()
+
+    def test_invalid_only_and_empty_libraries_do_not_publish_even_with_hidden_orphans(self):
+        for catalog_records in (None, {}, {'AAAAAAAAAAA': {'tags': ['hidden']}}):
+            for invalid in (False, True):
+                with self.subTest(invalid=invalid, catalog_records=catalog_records):
+                    if catalog_records is not None:
+                        self.catalog(catalog_records)
+                    if invalid:
+                        self.bookmark(metadata={'id': 'invalid-id'})
+                    self.output.write_text('keep existing index')
+                    self.output.chmod(0o640)
+                    with patch.object(indexer, 'write_index_atomic') as writer:
+                        status, _, stderr = self.run_index()
+                    self.assertEqual(status, 1)
+                    self.assertIn('No valid bookmarks found', stderr)
+                    writer.assert_not_called()
+                    self.assertEqual(self.output.read_text(), 'keep existing index')
+                    self.assertEqual(stat.S_IMODE(self.output.stat().st_mode), 0o640)
+                    self.assert_no_staging_files()
+                    if invalid:
+                        (self.collection / 'renamed.html').unlink()
+
+    def test_malformed_catalog_with_hidden_record_preserves_index(self):
+        self.bookmark()
+        self.catalog({'AAAAAAAAAAA': {'tags': ['hidden']}, 'BBBBBBBBBBB': {'tags': [1]}})
+        with patch.object(indexer, 'parse_bookmark', side_effect=AssertionError('should not scan')):
+            self.assert_catalog_refused()
+
+    def test_rebuild_applies_hiding_and_visibility_restoration(self):
+        self.bookmark()
+        self.catalog({'AAAAAAAAAAA': {'tags': ['topic']}})
+        self.assertEqual(self.run_index()[0], 0)
+        visible_html = self.output.read_bytes()
+        self.catalog({'AAAAAAAAAAA': {'tags': ['topic', 'hidden']}})
+        self.assertEqual(self.output.read_bytes(), visible_html)
+        self.assertEqual(self.run_index()[0], 0)
+        self.assertEqual(self.parsed_output()[0]['items'], [])
+        hidden_html = self.output.read_bytes()
+        self.catalog({'AAAAAAAAAAA': {'tags': ['topic']}})
+        self.assertEqual(self.output.read_bytes(), hidden_html)
+        self.assertEqual(self.run_index()[0], 0)
+        item, = self.parsed_output()[0]['items']
+        self.assertEqual(item['id'], 'AAAAAAAAAAA')
+        self.assertEqual(item['personalTags'], ['topic'])
 
     def test_explicit_library_bookmarks_and_configured_external_library(self):
         library = self.root / 'External library'

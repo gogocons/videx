@@ -159,7 +159,7 @@ class ConsumerTests(unittest.TestCase):
         (self.collection / 'renamed.html').write_text(document(A), encoding='utf-8')
         catalog = self.root / 'catalog.json'
         catalog.write_text(json.dumps({'version': 1, 'bookmarks': {
-            A: {'tags': [' Renamed ', 'renamed', 'HIDDEN']},
+            A: {'tags': [' Renamed ', 'renamed', 'Research']},
             B: {'tags': ['must not infer identity']},
         }, 'collections': {}}))
         fixtures = {f'Conflict [{A}].html': document(B), f'Legacy [{C}].html': 'legacy',
@@ -181,7 +181,7 @@ class ConsumerTests(unittest.TestCase):
         items = json.loads(payload)['items']
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]['id'], A)
-        self.assertEqual(items[0]['personalTags'], ['Renamed', 'hidden'])
+        self.assertEqual(items[0]['personalTags'], ['Renamed', 'Research'])
         self.assertNotIn('must not infer identity', output)
         self.assertEqual({path: path.read_bytes() for path in before}, before)
 

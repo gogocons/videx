@@ -264,7 +264,7 @@ def load_catalog_tags(library_root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
-        epilog='Personal catalog tags are included automatically. Invalid catalogs return status 2 and leave the existing index untouched.')
+        epilog='Personal catalog tags are included automatically. Rebuilding excludes bookmarks tagged hidden from index data, search, channels, and counts. This is an organizational visibility control, not a security feature. Invalid catalogs return status 2 and leave the existing index untouched.')
     parser.add_argument(
     'directory',
     nargs='?',
@@ -300,16 +300,21 @@ def main():
     paths = sorted(p for p in root.rglob('*.html') if p.is_file() and p.name.lower() != 'index.html')
     print(f'Scanning {len(paths)} HTML files in {root}', flush=True)
     items = []
+    valid_count = 0
     skipped = 0
     for path in paths:
         try:
             item = parse_bookmark(path, root, args.thumbnail_width, library_root)
             item['personalTags'] = tags_by_id.get(item['id'], [])
+            valid_count += 1
+            if 'hidden' in item['personalTags']:
+                continue
             items.append(item)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             skipped += 1
             print(f'  Skipping {path.relative_to(root)}: {exc}', file=sys.stderr)
-    if not items:
+    # All-hidden libraries must replace an older index with an empty one.
+    if not valid_count:
         print('ERROR: No valid bookmarks found; existing index left untouched.', file=sys.stderr)
         return 1
     payload = json.dumps({'generatedAt': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'), 'items': items}, ensure_ascii=False, separators=(',', ':'))

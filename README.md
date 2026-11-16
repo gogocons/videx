@@ -81,7 +81,11 @@ python3 -B scripts/yt-bookmark-index.py
 
 Index generation writes a unique temporary file beside `index.html`, then atomically replaces the index. Existing regular-file permissions are preserved; new indexes and replaced symlinks use normal creation permissions respecting the process umask, without writing through symlinks. Concurrent builds publish complete files; the last successful replacement wins.
 
-Rebuilding the index automatically embeds normalized personal tags from the selected library's `catalog.json` and displays them as wrapping badges on bookmark cards. Tags are display-only: search, channel filters, and sorting are unchanged, and `hidden` remains visible. Missing catalogs or tag records produce no tag row; orphan records are ignored. Malformed, unreadable, symlinked, or non-regular catalogs cause exit status `2` before index writing, even when no valid bookmarks exist, leaving any existing index and its permissions untouched. Bookmark files and catalog data are never rewritten. Existing indexes show tags only after rebuilding and remain self-contained offline.
+Rebuilding the index excludes every bookmark carrying the reserved personal tag `hidden` (case-insensitive, with surrounding whitespace normalized). Excluded bookmarks contribute no embedded metadata, links, thumbnails, search results, channel listings, or counts. Channels and Single Entries groups are calculated exclusively from visible bookmarks. Other normalized personal tags from the selected library's `catalog.json` appear as wrapping badges on bookmark cards; they do not add tag search or filtering. Missing catalogs or tag records produce no tag row; orphan records are ignored. Generated indexes remain self-contained offline.
+
+Rebuild the index after adding or removing `hidden` to apply visibility changes. When valid bookmarks exist but all are hidden, rebuilding succeeds and replaces any older index with an empty-state index. A genuinely empty library or one containing no valid bookmarks retains exit status `1` and leaves any existing index untouched. Malformed, unreadable, symlinked, or non-regular catalogs cause exit status `2` before index writing, even when no valid bookmarks exist, leaving any existing index and its permissions untouched.
+
+`hidden` is an organizational visibility control, not a security feature. Bookmark files, directories, catalog records, and CLI lookup/tag reports remain unchanged and accessible. Older index copies can still contain previously visible bookmarks, and failed rebuilds leave the existing index intact.
 
 ### Bookmark management
 
@@ -289,7 +293,6 @@ Compatibility: catalog schema **1**, bookmark metadata schema **2**, and JSON re
 1. Import all accessible entries from a YouTube playlist as individual bookmarks, using the existing video-ID checks to skip duplicates and reporting failures.
 2. Collections for curated browsing, with bookmarks belonging to multiple collections.
 3. Personal-tag search/filtering and visual collection browsing in the index.
-4. An explicit hidden-item display policy; current `hidden` tags remain ordinary visible tags.
 
 Longer-term possibilities include better batch management and a unified `videx` command, if the existing tools become cumbersome. These are ideas, not commitments.
 
