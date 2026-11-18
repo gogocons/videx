@@ -34,7 +34,7 @@ videx/
 - `yt-bookmark-tag.py` validates and manages catalog data and provides catalog-only lookup and inventory reports.
 - `yt-bookmark-generate.py` renders standalone HTML from explicit metadata, thumbnail, and output paths; `--back-link` accepts a relative index path.
 - `yt-bookmark-metadata.py` curates schema 2 metadata; it is an imported helper rather than a CLI.
-- `yt-bookmark-index.py` builds offline search, channel filtering, sorting, tag badges, and hidden exclusion.
+- `yt-bookmark-index.py` builds offline search, a unified Channel/Personal Tag Filters panel, sorting, tag badges, and hidden exclusion.
 - `yt-bookmark-upgrade.py` regenerates saved pages offline using their embedded metadata and thumbnail.
 - `videx_config.py` resolves the configured/default library; its direct script entry point prints that path.
 - `videx_identity.py` centralizes ID validation, metadata JSON parsing, and identity resolution.
@@ -82,7 +82,7 @@ introduced. Rendering differences require visual review before accepting artwork
 
 **Current state (v0.4.0):** A small suite of scripts with channel-organized bookmarks, curated metadata, a separate personal-tag catalog, capture tagging, opt-in text/JSON tag reports, and catalog-aware offline index cards. Identity checks, duplicate prevention, in-place refreshes, offline upgrades, previews and backups preserve existing formats. The original `yt-bookmark-*` script names are retained intentionally.
 
-Current index behavior includes personal-tag searching and `hidden` exclusion. The historical notes below describe the release snapshot; they do not override the [current features](../README.md#current-features) or [current index workflow](USAGE.md#rebuild-and-browse-the-offline-index). Original script names remain intentional.
+Current index behavior includes personal-tag searching, exact personal-tag filtering in a unified Filters panel, and `hidden` exclusion. The historical notes below describe the release snapshot; they do not override the [current features](../README.md#current-features) or [current index workflow](USAGE.md#rebuild-and-browse-the-offline-index). Original script names remain intentional.
 
 ## Historical release notes
 
@@ -116,6 +116,6 @@ Compatibility: catalog schema **1**, bookmark metadata schema **2**, and JSON re
 
 1. Import all accessible entries from a YouTube playlist as individual bookmarks, using the existing video-ID checks to skip duplicates and reporting failures.
 2. Collections for curated browsing, with bookmarks belonging to multiple collections.
-3. Dedicated personal-tag filtering and visual collection browsing in the index.
+3. Visual collection browsing in the index. Dedicated personal-tag filtering is now implemented in the unified Filters panel.
 
 Longer-term possibilities include better batch management and a unified `videx` command, if the existing tools become cumbersome. These are ideas, not commitments.

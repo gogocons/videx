@@ -124,9 +124,14 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:25px}
 h1{font-size:clamp(1.5rem,3vw,2.2rem);margin:0;letter-spacing:-.035em}.brand{display:flex;align-items:center;gap:12px}.play{display:inline-flex;align-items:center;justify-content:center;width:39px;height:39px;background:#d93636;color:white;border-radius:10px;font-weight:900;font-size:1.1rem;flex-shrink:0}
 .sub,.muted{color:#9ca5b5}.sub{font-size:.9rem;margin-top:5px}.stats{font-size:.88rem;color:#cbd2df}
-.toolbar{display:grid;grid-template-columns:minmax(200px,1fr) minmax(140px,240px) minmax(145px,200px);gap:12px;margin-bottom:17px}
-input,select{width:100%;background:#1d222c;color:#f3f5fa;border:1px solid #343b49;border-radius:10px;padding:13px 14px;font:inherit;outline-offset:3px}
-input:focus,select:focus{border-color:#90a9e8}.count{color:#9ca5b5;font-size:.88rem;margin:10px 0 18px}
+.toolbar{display:grid;grid-template-columns:minmax(200px,1fr) auto minmax(145px,200px);gap:12px;margin-bottom:17px}
+input,select,button{min-width:0;background:#1d222c;color:#f3f5fa;border:1px solid #343b49;border-radius:10px;padding:13px 14px;font:inherit;outline-offset:3px}
+input,select{width:100%}button{cursor:pointer}input:focus,select:focus,button:focus-visible{border-color:#90a9e8}
+[hidden]{display:none!important}.filter-panel{background:#171b23;border:1px solid #343b49;border-radius:12px;padding:16px;margin-bottom:14px}
+.filter-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:14px}
+.filter-field{min-width:0}.filter-field label{display:block;margin-bottom:7px}.filter-panel button{margin-top:14px}
+.filter-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}.filter-chip{max-width:100%;text-align:left;overflow-wrap:anywhere;padding:7px 10px;font-size:.85rem}
+.count{color:#9ca5b5;font-size:.88rem;margin:10px 0 18px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:25px 19px}
 .card{min-width:0}.thumb-link{display:block;position:relative;aspect-ratio:16/9;background:#232832;border-radius:12px;overflow:hidden;text-decoration:none}
 .thumb-link img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .2s}.thumb-link:hover img{transform:scale(1.035)}
@@ -143,9 +148,18 @@ a{color:inherit}.title a{text-decoration:none}.title a:hover{text-decoration:und
 <header><div class="brand"><span class="play" aria-hidden="true">▶</span><div><h1>Videx</h1><div class="sub">Your offline video reference library</div></div></div><div class="stats" id="stats"></div></header>
 <div class="toolbar">
 <input id="search" type="search" placeholder="Search titles, channels, descriptions, personal tags…" aria-label="Search bookmarks" autocomplete="off">
-<select id="channel" aria-label="Filter channel"><option value="">All Channels</option></select>
+<button id="filters" type="button" aria-expanded="false" aria-controls="filter-panel">Filters</button>
 <select id="sort" aria-label="Sort bookmarks"><option value="upload-desc">Newest upload</option><option value="upload-asc">Oldest upload</option><option value="title-asc">Title A–Z</option><option value="title-desc">Title Z–A</option><option value="channel-asc">Channel A–Z</option></select>
-</div><div class="count" id="count" aria-live="polite"></div><section class="grid" id="grid" aria-label="Bookmarks"></section><div class="empty" id="empty" hidden>No matching bookmarks found.</div><div class="footer" id="footer"></div>
+</div>
+<section id="filter-panel" class="filter-panel" aria-label="Filters" hidden>
+<div class="filter-fields">
+<div class="filter-field"><label for="channel">Channel</label><select id="channel"><option value="">All Channels</option></select></div>
+<div class="filter-field"><label for="personal-tag">Personal Tag</label><select id="personal-tag"><option value="">All Personal Tags</option></select></div>
+</div>
+<button id="clear-filters" type="button">Clear Filters</button>
+</section>
+<div id="filter-chips" class="filter-chips" role="group" aria-label="Active filters" hidden></div>
+<div class="count" id="count" aria-live="polite"></div><section class="grid" id="grid" aria-label="Bookmarks"></section><div class="empty" id="empty" hidden>No matching bookmarks found.</div><div class="footer" id="footer"></div>
 </main>
 <script id="bookmark-data" type="application/json">__BOOKMARK_DATA__</script>
 <script>
@@ -153,6 +167,39 @@ a{color:inherit}.title a{text-decoration:none}.title a:hover{text-decoration:und
 const data=JSON.parse(document.getElementById('bookmark-data').textContent);
 const items=data.items;
 const search=document.getElementById('search'),channel=document.getElementById('channel'),sort=document.getElementById('sort'),grid=document.getElementById('grid'),count=document.getElementById('count'),empty=document.getElementById('empty');
+const filters=document.getElementById('filters'),panel=document.getElementById('filter-panel'),personalTag=document.getElementById('personal-tag'),chips=document.getElementById('filter-chips');
+const tagLabels=new Map(data.personalTagOptions.map(tag=>[tag.key,tag.label]));
+for(const tag of data.personalTagOptions){
+    const opt=document.createElement('option');
+    opt.value=tag.key;opt.textContent=tag.label;personalTag.append(opt);
+}
+function setPanelOpen(open){panel.hidden=!open;filters.setAttribute('aria-expanded',String(open))}
+filters.addEventListener('click',()=>setPanelOpen(panel.hidden));
+document.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&!panel.hidden){event.preventDefault();setPanelOpen(false);filters.focus()}
+});
+document.getElementById('clear-filters').addEventListener('click',()=>{
+    channel.value='';personalTag.value='';render();
+    // Keep focus in the open panel so keyboard users can choose another filter.
+    channel.focus();
+});
+function renderFilters(){
+    const active=[];
+    if(channel.value)active.push({control:channel,label:`Channel: ${channel.value==='__single_entries__'?'Single Entries':channel.value}`});
+    if(personalTag.value)active.push({control:personalTag,label:`Personal Tag: ${tagLabels.get(personalTag.value)}`});
+    filters.textContent=active.length?`Filters (${active.length})`:'Filters';
+    chips.hidden=active.length===0;chips.replaceChildren();
+    for(const entry of active){
+        const button=node('button','filter-chip',`${entry.label} ×`);
+        button.type='button';button.setAttribute('aria-label',`Remove ${entry.label} filter`);
+        button.addEventListener('click',()=>{
+            entry.control.value='';render();
+            // Rendering replaces chips; return focus to a stable visible control.
+            filters.focus();
+        });
+        chips.append(button);
+    }
+}
 // Count bookmarks belonging to each channel.
 const channelCounts = new Map();
 
@@ -214,13 +261,14 @@ function render() {
              ...(Array.isArray(x.personalTags) ? x.personalTags : [])]
                 .some(v => v.toLocaleLowerCase().includes(q));
 
-        return channelMatch && searchMatch;
+        const tagMatch = !personalTag.value || x.personalTagKeys.includes(personalTag.value);
+        return channelMatch && searchMatch && tagMatch;
     });
 
     const s = sort.value;
 matches.sort((a,b)=>{switch(s){case 'upload-desc':return b.uploadDate.localeCompare(a.uploadDate);case 'upload-asc':return a.uploadDate.localeCompare(b.uploadDate);case 'title-asc':return a.title.localeCompare(b.title);case 'title-desc':return b.title.localeCompare(a.title);case 'channel-asc':return a.channel.localeCompare(b.channel);default:return b.uploadDate.localeCompare(a.uploadDate)}});
-count.textContent=`Showing ${matches.length.toLocaleString()} of ${items.length.toLocaleString()} bookmarks`;empty.hidden=matches.length!==0;grid.replaceChildren();const fragment=document.createDocumentFragment();for(const item of matches)fragment.append(makeCard(item));grid.append(fragment)}
-search.addEventListener('input',render);channel.addEventListener('change',render);sort.addEventListener('change',render);render();
+count.textContent=`Showing ${matches.length.toLocaleString()} of ${items.length.toLocaleString()} bookmarks`;empty.hidden=matches.length!==0;grid.replaceChildren();const fragment=document.createDocumentFragment();for(const item of matches)fragment.append(makeCard(item));grid.append(fragment);renderFilters()}
+search.addEventListener('input',render);channel.addEventListener('change',render);personalTag.addEventListener('change',render);sort.addEventListener('change',render);render();
 })();
 </script></body></html>'''
 
@@ -346,8 +394,17 @@ def main():
     if not valid_count:
         print('ERROR: No valid bookmarks found; existing index left untouched.', file=sys.stderr)
         return 1
+    # Derived snapshot data only: use the catalog's Python casefold identities,
+    # rather than approximating Unicode case folding in the browser.
+    tag_labels = {}
+    for item in items:
+        item['personalTagKeys'] = [tag.casefold() for tag in item['personalTags']]
+        for tag, key in zip(item['personalTags'], item['personalTagKeys']):
+            tag_labels.setdefault(key, tag)
+    tag_options = [{'key': key, 'label': tag_labels[key]} for key in sorted(tag_labels)]
     try:
-        payload = json.dumps({'generatedAt': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'), 'items': items},
+        payload = json.dumps({'generatedAt': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
+                              'items': items, 'personalTagOptions': tag_options},
                              ensure_ascii=False, separators=(',', ':'), allow_nan=False)
     except (TypeError, ValueError, OverflowError) as exc:
         print(f'ERROR: Cannot serialize index JSON: {exc}; existing index left untouched.', file=sys.stderr)

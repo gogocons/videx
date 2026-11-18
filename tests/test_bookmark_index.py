@@ -194,9 +194,11 @@ class IndexDocumentParser(HTMLParser):
         self.styles = []
         self.in_style = False
         self.color_schemes = []
+        self.elements = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        self.elements.append((tag, attrs))
         if tag == 'script':
             self.active = {'attrs': attrs, 'text': ''}
             self.scripts.append(self.active)
@@ -270,7 +272,7 @@ class CatalogIndexTests(unittest.TestCase):
 class Element {
     constructor(tag) {
         this.tag = tag; this.children = []; this.value = ''; this.textContent = '';
-        this.handlers = {}; this.hidden = false;
+        this.handlers = {}; this.hidden = false; this.attributes = {};
     }
     append(...nodes) {
         for (const node of nodes) {
@@ -279,18 +281,25 @@ class Element {
         }
     }
     replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
-    setAttribute() {}
+    setAttribute(name, value) { this.attributes[name] = value; }
     addEventListener(event, handler) { this.handlers[event] = handler; }
+    focus() { document.activeElement = this; }
 }
 const elements = Object.fromEntries(
-    ['bookmark-data', 'search', 'channel', 'sort', 'grid', 'count', 'empty', 'stats', 'footer']
+    ['bookmark-data', 'search', 'channel', 'sort', 'grid', 'count', 'empty', 'stats', 'footer',
+     'filters', 'filter-panel', 'personal-tag', 'filter-chips', 'clear-filters']
         .map(id => [id, new Element(id)]));
 elements['bookmark-data'].textContent = JSON.stringify(input.data);
 elements.sort.value = 'upload-desc';
+elements['filter-panel'].hidden = true;
+elements.filters.setAttribute('aria-expanded', 'false');
 globalThis.document = {
     getElementById: id => elements[id],
     createElement: tag => new Element(tag),
     createDocumentFragment: () => new Element('fragment'),
+    handlers: {},
+    addEventListener(event, handler) { this.handlers[event] = handler; },
+    activeElement: null,
 };
 eval(input.script);
 const snapshot = () => ({
@@ -299,14 +308,34 @@ const snapshot = () => ({
     emptyHidden: elements.empty.hidden,
     stats: elements.stats.textContent,
     channels: elements.channel.children.map(option => option.value),
+    tags: elements['personal-tag'].children.map(option => ({key: option.value, label: option.textContent})),
+    filters: elements.filters.textContent,
+    panelHidden: elements['filter-panel'].hidden,
+    expanded: elements.filters.attributes['aria-expanded'],
+    chipsHidden: elements['filter-chips'].hidden,
+    chips: elements['filter-chips'].children.map(chip => ({text: chip.textContent, name: chip.attributes['aria-label']})),
+    focus: Object.keys(elements).find(id => elements[id] === document.activeElement) || null,
+    query: elements.search.value, channel: elements.channel.value,
+    tag: elements['personal-tag'].value, sort: elements.sort.value,
 });
 const results = [snapshot()];
 for (const test of input.cases) {
-    elements.search.value = test.query || '';
-    elements.channel.value = test.channel || '';
-    elements.sort.value = test.sort || 'upload-desc';
-    const control = test.control || 'search';
-    elements[control].handlers[control === 'search' ? 'input' : 'change']();
+    if (test.action === 'escape') {
+        document.handlers.keydown({key: 'Escape', preventDefault() {}});
+    } else if (test.action === 'chip') {
+        const chip = elements['filter-chips'].children[test.index];
+        chip.focus();chip.handlers.click();
+    } else if (test.action === 'click') {
+        elements[test.control].focus();elements[test.control].handlers.click();
+    } else {
+        // Existing cases describe complete states; actions above preserve state.
+        elements.search.value = test.query || '';
+        elements.channel.value = test.channel || '';
+        elements['personal-tag'].value = test.tag || '';
+        elements.sort.value = test.sort || 'upload-desc';
+        const control = test.control || 'search';
+        elements[control].handlers[control === 'search' ? 'input' : 'change']();
+    }
     results.push(snapshot());
 }
 console.log(JSON.stringify(results));
@@ -397,6 +426,157 @@ console.log(JSON.stringify(results));
                 self.catalog(record)
                 self.assertEqual(self.run_index()[0], 0)
                 self.assertEqual(self.parsed_output()[0]['items'][0]['personalTags'], [])
+
+    def test_tag_filter_exact_unicode_identity_combines_with_search_channel_and_sort(self):
+        for name, identity, title, channel, uploaded in (
+                ('one', 'AAAAAAAAAAA', 'Zulu', 'Shared', '20260101'),
+                ('two', 'BBBBBBBBBBB', 'Alpha', 'Shared', '20260103'),
+                ('solo', 'CCCCCCCCCCC', 'Middle', 'Solo', '20260102'),
+                ('hidden', 'DDDDDDDDDDD', 'Excluded', 'Secret', '20260104')):
+            self.bookmark(name + '.html', identity, metadata={
+                'title': title, 'uploader': channel, 'upload_date': uploaded})
+        self.catalog({
+            'AAAAAAAAAAA': {'tags': [' Straße ', 'Σ', 'Topic']},
+            'BBBBBBBBBBB': {'tags': ['STRASSE', 'ς', 'Topic']},
+            'CCCCCCCCCCC': {'tags': ['Straßen', 'Topic']},
+            'DDDDDDDDDDD': {'tags': ['hidden', 'SecretTag']},
+            'EEEEEEEEEEE': {'tags': ['OrphanTag']},
+        })
+        self.assertEqual(self.run_index()[0], 0)
+        data, _ = self.parsed_output()
+        self.assertEqual(data['personalTagOptions'], [
+            {'key': 'strasse', 'label': 'Straße'}, {'key': 'strassen', 'label': 'Straßen'},
+            {'key': 'topic', 'label': 'Topic'}, {'key': 'σ', 'label': 'Σ'}])
+        cases = [
+            {'tag': 'strasse', 'control': 'personal-tag'},
+            {'tag': 'σ', 'control': 'personal-tag'},
+            {'tag': 'strasse', 'query': 'alpha', 'channel': 'Shared'},
+            {'tag': 'strasse', 'query': 'topic', 'channel': '__single_entries__'},
+            {'tag': 'topic', 'query': 'topic', 'channel': '__single_entries__'},
+            {'query': 'stra'},  # Partial tag searching is unchanged.
+            *[{'tag': 'topic', 'query': 'topic', 'sort': sort, 'control': 'sort'} for sort in
+              ('upload-desc', 'upload-asc', 'title-asc', 'title-desc', 'channel-asc')],
+        ]
+        orders = [['two', 'solo', 'one'], ['two', 'one'], ['two', 'one'], ['two'], [], ['solo'],
+                  ['two', 'solo', 'one'], ['two', 'solo', 'one'], ['one', 'solo', 'two'],
+                  ['two', 'solo', 'one'], ['one', 'solo', 'two'], ['one', 'two', 'solo']]
+        for result, order in zip(self.browser_results(cases), orders):
+            self.assertEqual(result['hrefs'], [f'bookmarks/{name}.html' for name in order])
+            self.assertEqual(result['count'], f'Showing {len(order)} of 3 bookmarks')
+            self.assertEqual(result['emptyHidden'], bool(order))
+
+    def test_panel_chips_clear_and_escape_preserve_independent_state_and_focus(self):
+        self.bookmark('one.html', metadata={'uploader': 'Shared'})
+        self.bookmark('two.html', 'BBBBBBBBBBB', metadata={'uploader': 'Shared'})
+        self.catalog({'AAAAAAAAAAA': {'tags': ['Topic']}})
+        self.assertEqual(self.run_index()[0], 0)
+        results = self.browser_results([
+            {'action': 'click', 'control': 'filters'},
+            {'query': 'synthetic', 'channel': 'Shared', 'tag': 'topic', 'sort': 'title-desc'},
+            {'action': 'click', 'control': 'filters'},
+            {'action': 'click', 'control': 'filters'},
+            {'action': 'escape'},
+            {'action': 'chip', 'index': 0},
+            {'action': 'chip', 'index': 0},
+            {'query': 'synthetic', 'channel': 'Shared', 'tag': 'topic', 'sort': 'title-desc'},
+            {'action': 'click', 'control': 'filters'},
+            {'action': 'click', 'control': 'clear-filters'},
+            {'action': 'escape'},
+            {'action': 'escape'},
+        ])
+        self.assertEqual([r['filters'] for r in results], [
+            'Filters', 'Filters', 'Filters (2)', 'Filters (2)', 'Filters (2)', 'Filters (2)',
+            'Filters (1)', 'Filters', 'Filters (2)', 'Filters (2)', 'Filters', 'Filters', 'Filters'])
+        self.assertTrue(results[0]['panelHidden'])
+        for index, hidden in ((1, False), (3, True), (4, False), (5, True), (9, False), (10, False)):
+            self.assertEqual(results[index]['panelHidden'], hidden)
+            self.assertEqual(results[index]['expanded'], str(not hidden).lower())
+        self.assertEqual(results[2]['chips'], [
+            {'text': 'Channel: Shared ×', 'name': 'Remove Channel: Shared filter'},
+            {'text': 'Personal Tag: Topic ×', 'name': 'Remove Personal Tag: Topic filter'}])
+        for index in (3, 4, 5):
+            self.assertEqual(results[index]['hrefs'], results[2]['hrefs'])
+            self.assertEqual(results[index]['tag'], 'topic')
+        self.assertEqual(results[6]['tag'], 'topic')
+        self.assertEqual(results[6]['channel'], '')
+        for index in (5, 6, 7, 11, 12):
+            self.assertEqual(results[index]['focus'], 'filters')
+        self.assertTrue(results[7]['chipsHidden'])
+        self.assertEqual(results[10]['focus'], 'channel')
+        self.assertEqual(results[10]['tag'], '')
+        self.assertEqual(results[10]['channel'], '')
+        for index in range(2, len(results)):
+            self.assertEqual(results[index]['query'], 'synthetic')
+            self.assertEqual(results[index]['sort'], 'title-desc')
+
+    def test_filter_markup_and_untrusted_long_labels(self):
+        label = '<img src=x onerror=alert(1)> ' + 'LongChannel' * 12
+        tag = '</script><script>alert(1)</script>' + 'x' * 35
+        self.bookmark('one.html', metadata={'uploader': label})
+        self.bookmark('two.html', 'BBBBBBBBBBB', metadata={'uploader': label})
+        self.catalog({'AAAAAAAAAAA': {'tags': [tag]}})
+        self.assertEqual(self.run_index()[0], 0)
+        data, parser = self.parsed_output()
+        self.assertEqual(data['personalTagOptions'], [{'key': tag.casefold(), 'label': tag}])
+        self.assertEqual(len(parser.scripts), 2)
+        attrs = {attributes['id']: (element, attributes) for element, attributes in parser.elements
+                 if 'id' in attributes}
+        self.assertEqual(attrs['filters'][0], 'button')
+        self.assertEqual(attrs['filters'][1]['aria-expanded'], 'false')
+        self.assertEqual(attrs['filters'][1]['aria-controls'], 'filter-panel')
+        self.assertIn('hidden', attrs['filter-panel'][1])
+        labels = [attributes.get('for') for element, attributes in parser.elements if element == 'label']
+        self.assertIn('channel', labels)
+        self.assertIn('personal-tag', labels)
+        self.assertEqual(attrs['count'][1]['aria-live'], 'polite')
+        self.assertIn('<option value="">All Personal Tags</option>', self.output.read_text())
+        result = self.browser_results([{'channel': label, 'tag': tag.casefold()}])[1]
+        self.assertEqual(result['filters'], 'Filters (2)')
+        self.assertEqual(result['chips'][0]['text'], f'Channel: {label} ×')
+        self.assertEqual(result['chips'][1]['text'], f'Personal Tag: {tag} ×')
+        self.assertEqual(len(result['hrefs']), 1)
+        self.assertNotIn('innerHTML', parser.scripts[1]['text'])
+
+    def test_removing_tag_chip_keeps_channel_and_clear_keeps_unmatched_search(self):
+        self.bookmark('one.html', metadata={'uploader': 'Shared'})
+        self.bookmark('two.html', 'BBBBBBBBBBB', metadata={'uploader': 'Shared'})
+        self.catalog({'AAAAAAAAAAA': {'tags': ['Topic']}})
+        self.assertEqual(self.run_index()[0], 0)
+        results = self.browser_results([
+            {'query': 'synthetic', 'channel': 'Shared', 'tag': 'topic', 'sort': 'upload-asc'},
+            {'action': 'chip', 'index': 1},
+            {'query': 'unmatched', 'channel': 'Shared', 'tag': 'topic', 'sort': 'upload-asc'},
+            {'action': 'click', 'control': 'filters'},
+            {'action': 'click', 'control': 'clear-filters'},
+        ])
+        self.assertEqual(results[2]['channel'], 'Shared')
+        self.assertEqual(results[2]['tag'], '')
+        self.assertEqual(results[2]['filters'], 'Filters (1)')
+        self.assertEqual(results[2]['query'], 'synthetic')
+        self.assertEqual(results[2]['sort'], 'upload-asc')
+        self.assertEqual(len(results[2]['hrefs']), 2)
+        self.assertEqual(results[2]['focus'], 'filters')
+        self.assertEqual(results[-1]['filters'], 'Filters')
+        self.assertEqual(results[-1]['query'], 'unmatched')
+        self.assertEqual(results[-1]['sort'], 'upload-asc')
+        self.assertFalse(results[-1]['emptyHidden'])
+        self.assertEqual(results[-1]['count'], 'Showing 0 of 2 bookmarks')
+
+    def test_all_hidden_filter_controls_remain_usable(self):
+        self.bookmark()
+        self.catalog({'AAAAAAAAAAA': {'tags': ['hidden', 'SecretTag']}})
+        self.assertEqual(self.run_index()[0], 0)
+        data, _ = self.parsed_output()
+        self.assertEqual(data['personalTagOptions'], [])
+        for result in self.browser_results([
+                {'action': 'click', 'control': 'filters'},
+                {'action': 'click', 'control': 'clear-filters'},
+                {'action': 'escape'}]):
+            self.assertEqual(result['hrefs'], [])
+            self.assertEqual(result['count'], 'Showing 0 of 0 bookmarks')
+            self.assertFalse(result['emptyHidden'])
+            self.assertEqual(result['filters'], 'Filters')
+            self.assertEqual(result['tags'], [])
 
     def test_validated_case_sensitive_ids_and_orphans(self):
         self.bookmark(identity='AAAAAAAAAAA')

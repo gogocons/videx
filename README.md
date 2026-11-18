@@ -28,13 +28,13 @@ Each standalone page contains a thumbnail, description, metadata, and links to t
 ## Current features
 
 - Save titles, channels, descriptions, chapters, dates, source tags, historical counts, and thumbnails in self-contained HTML pages.
-- Search the offline index by title, channel, description, video ID, or personal tags; filter channels and sort by upload date, title, or channel.
+- Search the offline index by title, channel, description, video ID, or personal tags; use the compact Filters panel for channels and exact personal tags, with removable active-filter chips. Sort independently by upload date, title, or channel.
 - Prevent duplicate captures by video ID, recognize renamed bookmarks through embedded metadata, and refresh existing bookmarks at their original paths.
 - Manage personal tags in a separate catalog, add tags during capture, and show searchable tag badges on index cards.
 - Audit identities and duplicates without changing files, with optional personal-tag and JSON reports.
 - Upgrade saved bookmark pages offline, using previews and backups, and keep your library outside the source repository.
 
-Playlist importing, collections, and dedicated index tag filtering remain future work. Personal tagging and tag searching are implemented; see the [development history and roadmap](docs/DEVELOPMENT.md#future-roadmap) for context.
+Playlist importing and collections remain future work. Personal tagging, tag searching, and dedicated index tag filtering are implemented; see the [development history and roadmap](docs/DEVELOPMENT.md#future-roadmap) for context.
 
 ## Requirements
 
