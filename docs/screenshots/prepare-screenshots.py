@@ -22,6 +22,24 @@ COLORS = {b'sRGB', b'gAMA', b'cHRM'}
 ALLOWED = {b'IHDR', b'IDAT', b'IEND'} | COLORS
 BASELINES = Path(__file__).resolve().parent
 
+# Exact top-left alpha samples from both approved screenshots at 8e2fc08.
+# Each row ends at its last nonopaque pixel; all other pixels are opaque.
+# Reflect this measured 12 x 12 corner rather than rasterizing a guessed radius.
+CORNER_ALPHA = tuple(bytes.fromhex(row) for row in (
+    '00 00 00 00 00 00 00 1f 77 b9 e4 f9',
+    '00 00 00 00 00 1e a7 fd',
+    '00 00 00 00 4e f2',
+    '00 00 00 6e fd',
+    '00 00 4e fd',
+    '00 1e f2',
+    '00 a7',
+    '1f fd',
+    '77',
+    'b9',
+    'e4',
+    'f9',
+))
+
 
 class PublicationError(OSError):
     def __init__(self, message, output_retained):
@@ -105,6 +123,24 @@ def inspect_png(data):
     return chunks, (width, height)
 
 
+def round_corners(image):
+    """Restore the approved corner pixels after resizing; retain lower alpha."""
+    rounded = image.convert('RGBA')
+    width, height = rounded.size
+    for y, row in enumerate(CORNER_ALPHA):
+        for x, mask_alpha in enumerate(row):
+            for point in ((x, y), (width - 1 - x, y),
+                          (x, height - 1 - y), (width - 1 - x, height - 1 - y)):
+                red, green, blue, alpha = rounded.getpixel(point)
+                alpha = min(alpha, mask_alpha)
+                # Match the historical 8-bit premultiply/unpremultiply rounding.
+                # This also clears hidden RGB at fully transparent corner pixels.
+                rgb = tuple(((c * alpha + 127) // 255 * 255 + alpha // 2) // alpha
+                            for c in (red, green, blue)) if alpha else (0, 0, 0)
+                rounded.putpixel(point, (*rgb, alpha))
+    return rounded
+
+
 def prepare(data):
     try:
         from PIL import Image, PngImagePlugin
@@ -121,7 +157,7 @@ def prepare(data):
         if original.size != dimensions or original.mode not in ('RGB', 'RGBA'):
             raise ValueError('Unexpected decoded PNG image')
         resized = original.resize(SIZE, Image.Resampling.LANCZOS) if dimensions != SIZE else original
-        fresh = Image.frombytes(resized.mode, SIZE, resized.tobytes())
+        fresh = round_corners(Image.frombytes(resized.mode, SIZE, resized.tobytes()))
         info = PngImagePlugin.PngInfo()
         colors = [(k, v) for k, v in chunks if k in COLORS]
         for k, v in colors:

@@ -1,9 +1,12 @@
 # Documentation screenshots
 
-`library.png` and `bookmark.png` are approved historical baselines. Preparation
-creates separate review candidates; it never approves or replaces these files.
-The existing rounded transparent corners are intentional. Existing screenshots
-predate current personal-tag presentation and are not pixel-exact current UI tests.
+`library.png` and `bookmark.png` are the current documentation screenshots,
+representing the refreshed Videx demo and current interface, including selective
+personal tags in the library. They have passed technical and privacy verification
+and are approved for documentation use. The original historical screenshots remain
+the reference for reproducing the established rounded-corner transparency treatment.
+Preparation creates separate review candidates; it never approves or replaces the
+current screenshots. These screenshots are not pixel-exact current UI tests.
 
 ## Firefox capture recipe
 
@@ -87,14 +90,27 @@ explicit action; dry-run does not create directories or temporary files.
 
 Only exact **8:5** inputs at **1440 × 900 or larger** are accepted. No cropping,
 stretching or upscaling occurs. Larger inputs use Pillow LANCZOS in the image's
-RGB/RGBA representation; no linear-light conversion is performed. Native-size
-inputs retain their decoded pixels. Alpha, including existing rounded corners,
-is preserved. The tool does not add rounded corners to a rectangular capture;
-any new corner treatment requires explicit visual review.
+RGB/RGBA representation; no linear-light conversion is performed. After resizing,
+the tool applies the exact rounded-corner treatment measured from both approved
+screenshots in commit `8e2fc0854c847ce743f51153c522c92caabd9a39`. Both originals
+have the same symmetric 12 × 12 corner footprint (nominal 12-pixel radius).
+The measured alpha samples are embedded in the utility rather than regenerating
+an approximate curve with a drawing API. Across all four corners, 92 pixels are
+fully transparent and 92 are partially transparent on an otherwise opaque input.
+
+RGB inputs become RGBA. Existing RGBA alpha is capped by the corner mask, so
+existing transparency is never made more opaque; repeated preparation is idempotent
+at native size. Within the mask, RGB follows the original 8-bit
+premultiply/unpremultiply rounding; fully transparent corner pixels have zero RGB.
+Every pixel outside the 184 affected corner positions remains unchanged from the
+decoded native-size image or the LANCZOS-resized image, including existing alpha.
+No Git checkout or reference image is needed at runtime. Final candidates still
+require explicit visual approval before replacing tracked screenshots.
 
 Input scope is static, noninterlaced, 8-bit RGB/RGBA PNG, at most 64 MiB and
 40 million pixels. Palette, grayscale, 16-bit, animated and `tRNS` images are
-unsupported. Outputs must decode as 1440 × 900 RGB/RGBA and be at most **2 MiB**.
+unsupported. Prepared outputs are 1440 × 900 RGBA and must be at most **2 MiB**.
+The output validator continues to accept sanitized RGB/RGBA images.
 This size cap is a project policy, not a hosting-service requirement.
 
 ## Privacy and color policy

@@ -1,6 +1,7 @@
 """Offline screenshot preparation tests using synthetic PNGs only."""
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import os
@@ -138,7 +139,7 @@ class PreparationTests(unittest.TestCase):
         with Image.open(io.BytesIO(result)) as image, Image.open(io.BytesIO(self.native)) as original:
             self.assertEqual(image.size, (1440, 900))
             self.assertEqual(image.mode, 'RGBA')
-            self.assertEqual(image.tobytes(), original.tobytes())
+            self.assert_unchanged_outside_corners(image, original)
             self.assertEqual(image.getpixel((0, 0))[3], 0)
             self.assertEqual(image.getpixel((100, 100))[3], 255)
 
@@ -147,9 +148,71 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(size, (2880, 1800))
         with Image.open(io.BytesIO(result)) as image, Image.open(io.BytesIO(self.hidpi)) as source:
             expected = source.resize(prep.SIZE, Image.Resampling.LANCZOS)
-            self.assertEqual(image.tobytes(), expected.tobytes())
+            self.assert_unchanged_outside_corners(image, expected)
             self.assertEqual(image.getpixel((0, 0))[3], 0)
             self.assertEqual(image.getpixel((100, 100))[3], 255)
+
+    def assert_unchanged_outside_corners(self, actual, expected):
+        expected = expected.convert('RGBA')
+        # Cover everything except the four 12 x 12 bounding squares.
+        for box in ((12, 0, 1428, 900), (0, 12, 12, 888),
+                    (1428, 12, 1440, 888)):
+            self.assertEqual(actual.crop(box).tobytes(),
+                             expected.crop(box).tobytes())
+        # Within those squares, opaque mask samples must also remain untouched.
+        for y in range(12):
+            for x in range(12):
+                if x >= len(prep.CORNER_ALPHA[y]):
+                    for point in ((x, y), (1439 - x, y),
+                                  (x, 899 - y), (1439 - x, 899 - y)):
+                        self.assertEqual(actual.getpixel(point),
+                                         expected.getpixel(point))
+
+    def test_exact_historical_alpha_for_rgb_and_rgba(self):
+        # SHA-256 of the full alpha plane independently extracted from BOTH
+        # approved PNGs at 8e2fc0854c847ce743f51153c522c92caabd9a39.
+        historical_alpha = '058d79cac87ec4d9083ce2f3c42948cf70cf4616813c9dee121eaef7c93ab714'
+        outputs = []
+        for mode in ('RGB', 'RGBA'):
+            with self.subTest(mode=mode):
+                source = Image.new(mode, prep.SIZE, (16, 18, 23, 255) if mode == 'RGBA'
+                                   else (16, 18, 23))
+                stream = io.BytesIO()
+                source.save(stream, format='PNG')
+                result, _, _ = prep.prepare(stream.getvalue())
+                prep.validate_output(result)
+                with Image.open(io.BytesIO(result)) as image:
+                    alpha = image.getchannel('A')
+                    self.assertEqual(hashlib.sha256(alpha.tobytes()).hexdigest(),
+                                     historical_alpha)
+                    self.assertEqual(alpha.histogram()[0], 92)
+                    self.assertEqual(sum(alpha.histogram()[1:255]), 92)
+                    self.assertEqual(image.getpixel((0, 0)), (0, 0, 0, 0))
+                    self.assertEqual(image.getpixel((7, 0)), (16, 16, 25, 31))
+                    self.assertEqual(image.getpixel((8, 0)), (15, 17, 24, 119))
+                    self.assert_unchanged_outside_corners(image, source)
+                    outputs.append(image.tobytes())
+                repeated, _, _ = prep.prepare(result)
+                with Image.open(io.BytesIO(repeated)) as image:
+                    self.assertEqual(image.tobytes(), outputs[-1])
+        self.assertEqual(outputs[0], outputs[1])
+
+    def test_existing_transparency_is_retained(self):
+        source = Image.new('RGBA', prep.SIZE, (60, 90, 120, 255))
+        source.putpixel((7, 0), (60, 90, 120, 10))
+        source.putpixel((8, 0), (60, 90, 120, 180))
+        source.putpixel((100, 100), (60, 90, 120, 73))
+        stream = io.BytesIO()
+        source.save(stream, format='PNG')
+        result, _, _ = prep.prepare(stream.getvalue())
+        with Image.open(io.BytesIO(result)) as image:
+            self.assertEqual(image.getpixel((7, 0))[3], 10)
+            self.assertEqual(image.getpixel((8, 0))[3], 119)
+            self.assertEqual(image.getpixel((100, 100)), (60, 90, 120, 73))
+            self.assert_unchanged_outside_corners(image, source)
+        repeated, _, _ = prep.prepare(result)
+        with Image.open(io.BytesIO(result)) as first, Image.open(io.BytesIO(repeated)) as second:
+            self.assertEqual(first.tobytes(), second.tobytes())
 
     def test_metadata_removed_and_color_preserved(self):
         colors = [(b'sRGB', b'\1'), (b'gAMA', prep.GAMMA), (b'cHRM', prep.CHROMATICITIES)]
