@@ -49,6 +49,14 @@ root = pathlib.Path(os.environ['IMPORT_FIXTURE'])
 identity = sys.argv[-1].split('=')[-1]
 with (root / 'calls.jsonl').open('a') as stream:
     stream.write(json.dumps(sys.argv[1:]) + '\\n')
+if '--dump-single-json' in sys.argv:
+    if os.environ.get('PLAYLIST_SLEEP'):
+        (root / 'waiting').write_text('discovery')
+        time.sleep(30)
+    print((root / 'playlist.json').read_text())
+    if os.environ.get('PLAYLIST_STDERR'):
+        print(os.environ['PLAYLIST_STDERR'], file=sys.stderr)
+    sys.exit(int(os.environ.get('PLAYLIST_EXIT', '0')))
 mode = json.loads(os.environ.get('IMPORT_MODES', '{}')).get(identity)
 if mode == 'sleep':
     (root / 'waiting').write_text(identity)

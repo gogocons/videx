@@ -33,17 +33,20 @@ Each standalone page contains a thumbnail, description, metadata, and links to t
 - Manage personal tags in a separate catalog, add tags during capture, and show searchable tag badges on index cards.
 - Audit identities and duplicates without changing files, with optional personal-tag and JSON reports.
 - Upgrade saved bookmark pages offline, using previews and backups, and keep your library outside the source repository.
-- Import a TXT backlog with read-only previews, duplicate checks, per-entry results, and one final index rebuild.
+- Import a TXT backlog or public YouTube playlist with read-only previews, duplicate checks, per-entry results, and one final index rebuild.
 
-Playlist importing and collections remain future work. Personal tagging, tag searching, and dedicated index tag filtering are implemented; see the [development history and roadmap](docs/DEVELOPMENT.md#future-roadmap) for context.
+Collections remain future work. Personal tagging, tag searching, and dedicated index tag filtering are implemented; see the [development history and roadmap](docs/DEVELOPMENT.md#future-roadmap) for context.
 
 Preview a TXT backlog with `python3 -B scripts/yt-bookmark-import.py --file backlog.txt`;
-add `--apply` to capture new bookmarks. See the [TXT format, examples, and recovery guide](docs/BATCH_IMPORT.md).
+or preview a public playlist with `python3 -B scripts/yt-bookmark-import.py --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'`.
+Add `--apply` to capture new bookmarks. TXT preview works offline; playlist preview
+uses the network for discovery. Neither writes to the library. See the
+[batch import format, examples, and recovery guide](docs/BATCH_IMPORT.md).
 
 ## Requirements
 
 - **Python 3**, **Bash**, and common POSIX utilities (`find`, `sed`, `mktemp`).
-- **yt-dlp**, installed separately and available on `PATH`, for capture and refresh.
+- **yt-dlp**, installed separately and available on `PATH`, for capture, refresh, and playlist discovery.
 - **Pillow**, optionally, to reduce embedded index thumbnail sizes; otherwise original thumbnails are used.
 - macOS or Linux; no Node.js, database, web server, or `jq` required. Linux is an intended platform; see the [recorded runtime validation](docs/DEVELOPMENT.md#testing-and-recorded-runtime-validation) for tested environments. No minimum Python version beyond Python 3 has been qualified.
 
@@ -114,7 +117,7 @@ The tag tool also supports removing, replacing, and renaming tags, catalog-only 
 
 ## Important usage cautions
 
-- **Internet:** Capture and refresh need internet access. Browsing, indexing, tagging, auditing, and upgrades work offline; external video links still require a connection.
+- **Internet:** Capture, refresh, and playlist discovery (including preview) need internet access. TXT previews, browsing, indexing, tagging, auditing, and upgrades work offline; external video links still require a connection.
 - **Destination:** Capture `--output DIR` selects a library root and can create directories. Check the configured or explicit path before your first capture. Index and audit commands do not create missing bookmark directories.
 - **Existing bookmarks:** Existing IDs are skipped by default, even after title/channel changes. `--overwrite` refreshes HTML at its existing path; ambiguous matches are refused.
 - **Preview versus writes:** Catalog edits and upgrades preview by default; `--apply` saves those changes. Capture writes new bookmarks and automatically saves their requested tags. For existing capture tags, `--apply` controls tag edits independently of HTML refresh with `--overwrite`.
@@ -128,7 +131,7 @@ The tag tool also supports removing, replacing, and renaming tags, catalog-only 
 - [Development](docs/DEVELOPMENT.md) — Architecture, modules, testing, runtime validation, history, historical release notes, and roadmap.
 - [Data formats](docs/DATA_FORMATS.md) — Library layout, metadata, catalog and report schemas, identity, normalization, and compatibility.
 - [Safety](docs/SAFETY.md) — Filesystem checks, validation, backups, publication, failure statuses, and concurrency limits.
-- [TXT batch import](docs/BATCH_IMPORT.md) — Input format, preview/apply commands, reports, and recovery.
+- [Batch import](docs/BATCH_IMPORT.md) — TXT format, public playlists, preview/apply commands, reports, and recovery.
 
 ## License
 

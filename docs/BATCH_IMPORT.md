@@ -1,9 +1,9 @@
-# TXT batch import
+# TXT and public playlist batch import
 
 [Back to README](../README.md) · [Usage](USAGE.md) · [Safety](SAFETY.md)
 
-Import a backlog as individual standalone bookmarks. This command supports TXT
-files only; playlist discovery and Collections remain future work. It uses the
+Import a backlog or public YouTube playlist as individual standalone bookmarks.
+Collections remain future work. Both input adapters use the
 same capture, metadata curation, and HTML generation pipeline as single-video
 capture, without changing bookmark or catalog formats.
 
@@ -21,9 +21,16 @@ python3 -B scripts/yt-bookmark-import.py --file backlog.txt --apply
 
 # Apply without rebuilding; emit one JSON report
 python3 -B scripts/yt-bookmark-import.py --file backlog.txt --apply --no-re-index --json
+
+# Discover a public playlist and preview; network required, no library writes
+python3 -B scripts/yt-bookmark-import.py --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'
+
+# Discover fully, then capture new IDs and rebuild the index once
+python3 -B scripts/yt-bookmark-import.py --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID' --apply
 ```
 
-`--file` is required. `--output` selects the library root, never its `bookmarks/`
+Exactly one of `--file` or `--playlist` is required. Replace `PLAYLIST_ID` with an
+actual playlist ID. `--output` selects the library root, never its `bookmarks/`
 subdirectory. Otherwise the existing `config.local.json` setting or project-root
 fallback applies. Invalid configuration refuses the operation; explicit output
 overrides configuration. `--apply` and `--dry-run` are mutually exclusive.
@@ -77,9 +84,11 @@ be planned or imported. An unreadable file or invalid UTF-8 refuses the batch.
 
 ## Preview and apply
 
-Preview validates the entire file and the existing library inventory. It creates
-no directories, bookmarks, catalogs, backups, or indexes, and does not invoke
-yt-dlp. **Would create is a plan, not verified video availability.** A missing
+TXT preview validates the entire file and the existing library inventory without
+invoking yt-dlp or using the network. Playlist preview uses yt-dlp for flat
+playlist discovery over the network, without extracting individual videos or
+downloading thumbnails. Neither preview creates directories, bookmarks, catalogs,
+backups, or indexes. **Would create is a plan, not verified video availability.** A missing
 library is treated as empty; unsafe or incomplete existing inventories refuse
 the operation.
 
@@ -113,16 +122,29 @@ apply to the index.
 
 Human reports and `--json` distinguish created, would create, skipped existing,
 duplicate input, invalid input, unavailable, failed/unknown, and not processed.
-Stage 1 conservatively reports extractor errors as failed/unknown: it has no
+Per-video capture conservatively reports extractor errors as failed/unknown: it has no
 reliable structured evidence to distinguish permanent unavailability from network,
-authentication, or extractor problems. The unavailable count is reserved and remains
-zero. Index status is separate from per-entry outcomes.
+authentication, or extractor problems. Playlist entries explicitly marked private,
+authentication/subscription restricted, or with exact `[Private video]`/`[Deleted video]`
+placeholder titles are reported unavailable at discovery time; this is not a claim
+of permanent unavailability. Missing or malformed entries/IDs are invalid input.
+An existing valid bookmark is reused even when its playlist entry is unavailable.
+Index status is separate from per-entry outcomes.
 
 JSON emits one document with `report_version: 1`, `apply`, `library`, ordered
 `entries`, `summary`, `errors`, `interrupted`, `index`, and `exit_status`. Entries
 include `line`, `input`, `id`, `outcome`, `path`, and optional `message` or
 `duplicate_of` (the first occurrence's physical line). Index diagnostics are retained
 in the JSON report. Argument syntax errors use argparse diagnostics instead.
+
+TXT reporting retains its existing schema and physical-line semantics. Playlist
+reports additionally include `source` with `type: "playlist"`, original `url`,
+`id`, optional `title` and `description` (null when absent), `discovery` status,
+`discovered_entries`, and `unique_valid_ids`. Playlist entries use `line: null`
+and one-based `position` in the original order; `duplicate_of` refers to the first
+position. Discovery failures do not expose partial candidate lists or raw extractor
+diagnostics that could contain unrelated filesystem paths. Human reports identify
+the playlist and show discovery totals alongside the established outcome counts.
 
 Exit statuses:
 
@@ -133,7 +155,7 @@ Exit statuses:
 | `2` | Invocation, input-file, configuration, dependency, or global preflight refusal |
 | `130` | Interrupted operation |
 
-To recover, fix reported input/library problems and rerun the same file. Saved IDs
+To recover, fix reported input/library problems and rerun the same file or playlist URL. Saved IDs
 are skipped; remaining entries are retried. No checkpoint database is needed. If
 the index is stale or its rebuild failed, resolve the reported issue and run:
 
@@ -146,3 +168,44 @@ possible. A hard kill or power loss cannot guarantee a final report or index
 rebuild and may leave staging files. No completed bookmark is rolled back and no
 automatic cleanup of unrelated artifacts is attempted. Atomic publication does
 not promise power-loss durability. Keep independent library backups.
+
+## Public playlist discovery and completeness
+
+`--playlist` accepts HTTP/HTTPS `/playlist?list=ID` URLs on `youtube.com`,
+`www.youtube.com`, `m.youtube.com`, and `music.youtube.com`. Valid video watch,
+short, live, embed, or `youtu.be` links with one `list` parameter are also accepted
+and normalized to the full playlist URL. Video/index/share query parameters do not
+select a partial playlist. Playlist IDs follow the installed extractor's public
+prefix families (`PL`, `EC`, `UU`, `FL`, `UL`, `TL`, `PU`, `OLAK5uy_`, followed by
+at least ten ID characters). Account lists such as Watch Later/liked videos and
+generated mixes are unsupported. Credentials, ports, fragments, duplicate `list`
+parameters, arbitrary websites, and extractor/search targets are rejected.
+
+Discovery uses `--ignore-config --no-cache-dir --no-mark-watched --flat-playlist
+--yes-playlist --simulate --dump-single-json --no-lazy-playlist --abort-on-error`
+and `--extractor-args youtube:raise_incomplete_data=true`. The flags and JSON
+contract were checked locally against yt-dlp **2026.10.26** help and installed
+source. No Python yt-dlp import dependency is added. yt-dlp handles pagination;
+there is no imposed entry limit. The full flat JSON result is held in memory
+before deduplication and importing. Discovery never downloads media, thumbnails,
+or per-video metadata and never marks videos watched.
+
+Discovery must finish before any captures. Nonzero exit, invalid/ambiguous JSON,
+invalid playlist structure or identity, inconsistent counts/positions, explicit
+error/truncation/continuation markers, or partial selections refuse the whole
+operation with status `2`. Quiet discovery emitting any stderr diagnostic is also
+refused conservatively, including potentially benign warnings: completeness cannot
+be confirmed. No bookmarks, catalogs, or indexes are written on discovery refusal.
+Resolve the warning/extractor issue and retry; there is no partial-discovery override.
+Ctrl-C during discovery returns `130` without starting captures.
+
+After discovery, both sources use the same deduplication, inventory planning,
+sequential capture, create-only publication, interruption, and index pipeline.
+Repeated playlist IDs are reported as duplicate input and processed once. Repeating
+the same import rediscovers the playlist and skips saved IDs, retrying entries that
+previously failed. A changing playlist or counts that disagree with the enumerated
+entries may require retrying discovery. Missing optional counts are allowed when
+there is no evidence of truncation; the importer cannot independently prove that
+YouTube exposed every entry. Playlist order and metadata are retained in the
+report only, without catalog/schema changes, synchronization, or Collection creation.
+No authentication/private-playlist support or playlist deletion is provided.

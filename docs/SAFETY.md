@@ -10,10 +10,11 @@ These files are excluded from Git tracking by default. Your bookmark collection 
 
 `--apply` is operation-specific: catalog edits and upgrades preview by default; capture writes new bookmarks and automatically applies their requested tags. `--overwrite` refreshes existing HTML independently of existing-bookmark tag edits. Index generation writes its output without an apply flag. See [usage](USAGE.md) before running commands.
 
-## TXT batch import safety
+## Bulk import safety
 
-The [TXT importer](BATCH_IMPORT.md) previews by default without extraction or
-filesystem writes. Its `--apply` authorizes new captures only: existing IDs are
+The [bulk importer](BATCH_IMPORT.md) previews by default without library writes.
+TXT preview is offline; public playlist preview uses flat network discovery only,
+without individual video extraction or thumbnails. Its `--apply` authorizes new captures only: existing IDs are
 reused, with no overwrite, tagging, or Collection assignment. Unsafe/incomplete
 inventories refuse or stop the batch; independent extraction failures can continue.
 Importer extraction ignores ambient yt-dlp configuration. Requested and extracted
@@ -25,9 +26,17 @@ Completed bookmarks survive later failures. Indexing runs once after creation,
 including partial-success batches, unless suppressed; index failure preserves the
 previous index. Handled interruption stops the capture process group and reports
 partial progress. Hard termination may leave a stale index or staging files. Rerun
-the TXT file to skip saved IDs and retry remaining entries, then rebuild offline
+the TXT file or playlist URL to skip saved IDs and retry remaining entries, then rebuild offline
 if needed. Exit statuses are `0` complete, `1` partial, `2` global refusal, and
 `130` interrupted. Generic extractor errors are not labeled definitively unavailable.
+
+Playlist discovery is a prerequisite for any capture: nonzero extraction status,
+diagnostics, invalid JSON/structure, count or position inconsistencies, and explicit
+incomplete/error markers refuse the whole discovery without library changes.
+This deliberately includes benign discovery warnings; there is no partial-list
+apply override. Playlist metadata stays in reports and is not saved to catalogs.
+No authentication, account mutation, playlist synchronization/deletion, or Collection
+creation is performed. See [discovery completeness limits](BATCH_IMPORT.md#public-playlist-discovery-and-completeness).
 
 ## Filesystem inspection
 

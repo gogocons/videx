@@ -14,7 +14,7 @@ The index is generated output; bookmark HTML and personal catalog data are persi
 videx/
 ├── scripts/
 │   ├── yt-bookmark.sh            # Capture bookmarks and optionally rebuild the index
-│   ├── yt-bookmark-import.py     # Preview/apply TXT batches using single-video capture
+│   ├── yt-bookmark-import.py     # TXT/public-playlist adapters using single-video capture
 │   ├── yt-bookmark-find.py       # Video-ID lookup and read-only library audit
 │   ├── yt-bookmark-tag.py        # Personal catalog management and tag reports
 │   ├── yt-bookmark-generate.py   # Render standalone HTML
@@ -31,7 +31,7 @@ videx/
 ```
 
 - `yt-bookmark.sh` coordinates extraction, duplicate checks, refreshes, tagging, and optional indexing.
-- `yt-bookmark-import.py` separates TXT discovery from ordered ID orchestration, with read-only planning, conservative failure reports, and once-per-batch indexing. Its private capture contract uses `--batch-result` for structured outcomes, isolated yt-dlp options, expected-ID checks, and generator `--create-only` publication. These internal flags are not part of the ordinary capture workflow. Future playlist discovery can supply the same normalized source records; no Collection schema is introduced.
+- `yt-bookmark-import.py` supplies TXT and public-playlist adapters to shared deduplication and ordered ID orchestration, with read-only planning, conservative failure reports, and once-per-batch indexing. Playlist discovery validates a complete flat yt-dlp JSON response before any capture; source metadata remains report-only. Its private capture contract uses `--batch-result` for structured outcomes, isolated yt-dlp options, expected-ID checks, and generator `--create-only` publication. These internal flags are not part of the ordinary capture workflow. No Collection schema is introduced.
 - `yt-bookmark-find.py` provides offline URL/ID lookup, identity auditing, and opt-in personal-tag reports.
 - `yt-bookmark-tag.py` validates and manages catalog data and provides catalog-only lookup and inventory reports.
 - `yt-bookmark-generate.py` renders standalone HTML from explicit metadata, thumbnail, and output paths; `--back-link` accepts a relative index path.
@@ -67,6 +67,14 @@ TXT importer regressions live in `tests/test_bookmark_import.py` and run with
 They use synthetic libraries and an executable yt-dlp stub, including a real
 interruption of a waiting synthetic capture; no configured library or network is used.
 See [batch import](BATCH_IMPORT.md) for the durable input and recovery contract.
+
+Playlist adapter regressions in `tests/test_playlist_import.py` share the synthetic
+extractor fixture and run alongside TXT tests with
+`python3 -B -m unittest discover -s tests -p 'test_*import.py' -v`.
+Fixtures cover full multi-page-sized results, partial-discovery refusal, inaccessible
+entries, order/deduplication, shared capture/retry/index behavior, and discovery
+interruption. They make no live YouTube requests. Local installed yt-dlp help/source
+verification does not constitute live playlist validation.
 
 ## Development guidance
 
@@ -122,7 +130,7 @@ Compatibility: catalog schema **1**, bookmark metadata schema **2**, and JSON re
 
 **Future work (not included in v0.4.0):**
 
-1. Import all accessible entries from a YouTube playlist as individual bookmarks, using the existing video-ID checks to skip duplicates and reporting failures.
+1. TXT and public playlist importing are implemented after the v0.4.0 release snapshot; see [batch import](BATCH_IMPORT.md). Further source adapters or batch improvements remain possible.
 2. Collections for curated browsing, with bookmarks belonging to multiple collections.
 3. Visual collection browsing in the index. Dedicated personal-tag filtering is now implemented in the unified Filters panel.
 

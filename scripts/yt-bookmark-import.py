@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview or apply an ordered TXT batch of YouTube bookmarks."""
+"""Preview or apply YouTube bookmarks from TXT or a public playlist."""
 import argparse
 from collections import Counter
 from importlib.util import module_from_spec, spec_from_file_location
@@ -74,7 +74,7 @@ def input_id(value):
 
 def read_txt(path):
     """Return source records; another discovery adapter can supply these later."""
-    entries, seen = [], {}
+    entries = []
     for number, raw in enumerate(path.read_bytes().decode('utf-8-sig').split('\n'), 1):
         value = raw.strip()
         if not value or value.startswith('#'):
@@ -84,12 +84,145 @@ def read_txt(path):
             entry['id'] = input_id(value)
         except ValueError as exc:
             entry.update(outcome='invalid_input', message=str(exc))
-        else:
-            if entry['id'] in seen:
-                entry.update(outcome='duplicate_input', duplicate_of=seen[entry['id']])
-            else:
-                seen[entry['id']] = number
         entries.append(entry)
+    return deduplicate(entries)
+
+
+def deduplicate(entries):
+    """First valid ID wins, independently of the input adapter."""
+    seen = {}
+    for entry in entries:
+        if not valid_id(entry['id']):
+            continue
+        position = entry.get('position', entry['line'])
+        if entry['id'] in seen:
+            entry.update(outcome='duplicate_input', duplicate_of=seen[entry['id']])
+        else:
+            seen[entry['id']] = position
+    return entries
+
+
+def playlist_url(value):
+    """Validate a public playlist target and discard video/selection parameters."""
+    if (any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
+            or any(c in value for c in ',<>[]"`|')
+            or re.search(r'%(?![0-9A-Fa-f]{2})', value)):
+        raise ValueError('Malformed playlist URL')
+    url = urlsplit(value)
+    hosts = ('youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com')
+    if (url.scheme not in ('http', 'https') or url.hostname not in (*hosts, 'youtu.be', 'www.youtu.be')
+            or url.username is not None or url.password is not None or ':' in url.netloc
+            or url.fragment):
+        raise ValueError('Expected a public YouTube playlist URL without credentials, ports, or fragments')
+    query = parse_qs(url.query, keep_blank_values=True)
+    ids = query.get('list', [])
+    if (len(ids) != 1 or not re.fullmatch(r'(?:PL|EC|UU|FL|UL|TL|PU|OLAK5uy_)[A-Za-z0-9_-]{10,}', ids[0])):
+        raise ValueError('Missing, ambiguous, or unsupported public playlist ID (account lists and mixes are unsupported)')
+    if url.hostname in hosts and url.path == '/playlist':
+        if 'v' in query:
+            raise ValueError('Ambiguous playlist URL containing a video selector')
+    else:
+        # Normal watch/share links with list= are accepted only as valid videos.
+        input_id(value)
+    return ids[0], f'https://www.youtube.com/playlist?list={ids[0]}'
+
+
+def playlist_document(text):
+    """Reject ambiguous/nonstandard JSON rather than silently normalizing it."""
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('Playlist JSON contains duplicate object members')
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise ValueError('Playlist JSON contains a nonstandard numeric value')
+
+    try:
+        return json.loads(text, object_pairs_hook=unique, parse_constant=invalid_constant)
+    except (ValueError, RecursionError):
+        raise ValueError('Playlist discovery returned invalid or ambiguous JSON') from None
+
+
+def check_discovery_errors(obj):
+    """Explicit partial-result markers cannot be treated as successful discovery."""
+    for key in ('error', 'errors', '_error', 'incomplete', 'truncated', 'has_more',
+                'continuation', 'continuation_token', 'next_page', 'next_page_token'):
+        if obj.get(key):
+            raise ValueError('Playlist discovery indicates errors or incomplete results')
+    if obj.get('is_complete') is False or obj.get('complete') is False:
+        raise ValueError('Playlist discovery indicates incomplete results')
+
+
+def playlist_entries(document, expected_id):
+    """Validate a fully enumerated flat playlist, then normalize its entries."""
+    if not isinstance(document, dict) or document.get('_type') != 'playlist' or not isinstance(document.get('entries'), list):
+        raise ValueError('Playlist discovery returned an invalid playlist structure')
+    check_discovery_errors(document)
+    if document.get('id') is not None and document['id'] != expected_id:
+        raise ValueError('Discovered playlist ID does not match the requested playlist')
+    if document.get('availability') not in (None, 'public', 'unlisted'):
+        raise ValueError('Playlist requires access beyond public unauthenticated discovery')
+    for key in ('title', 'description'):
+        if document.get(key) is not None and not isinstance(document[key], str):
+            raise ValueError('Invalid optional playlist metadata')
+    raw_entries = document['entries']
+    for key in ('playlist_count', 'n_entries'):
+        count = document.get(key)
+        if count is not None and (type(count) is not int or count != len(raw_entries)):
+            raise ValueError('Playlist discovery count differs from the enumerated entries')
+    requested = document.get('requested_entries')
+    if requested is not None and (not isinstance(requested, list)
+            or any(type(n) is not int or n != i for i, n in enumerate(requested, 1))
+            or len(requested) != len(raw_entries)):
+        raise ValueError('Playlist discovery returned a partial selection of entries')
+    entries = []
+    for position, raw in enumerate(raw_entries, 1):
+        entry = dict(line=None, position=position, input='', id=None, path=None, outcome='not_processed')
+        if not isinstance(raw, dict):
+            entry.update(outcome='invalid_input', message='Missing or malformed playlist entry')
+        else:
+            check_discovery_errors(raw)
+            index = raw.get('playlist_index')
+            if index is not None and (type(index) is not int or index != position):
+                raise ValueError('Playlist discovery returned noncontiguous or reordered positions')
+            identity = raw.get('id')
+            if valid_id(identity):
+                entry.update(id=identity, input=f'https://www.youtube.com/watch?v={identity}')
+            unavailable = (raw.get('availability') in ('private', 'premium_only', 'subscriber_only', 'needs_auth')
+                           or raw.get('title') in ('[Private video]', '[Deleted video]'))
+            if unavailable:
+                entry.update(outcome='unavailable', message='Playlist marks this entry unavailable at discovery time')
+            elif not valid_id(identity) or raw.get('_type') not in (None, 'url', 'url_transparent', 'video'):
+                entry.update(outcome='invalid_input', message='Playlist entry has no valid YouTube video identity')
+        entries.append(entry)
+    return deduplicate(entries)
+
+
+def discover_playlist(canonical_url, source):
+    """Discover before applying anything; never return a known partial list."""
+    try:
+        completed = run_command(['yt-dlp', '--ignore-config', '--no-cache-dir', '--no-mark-watched',
+            '--flat-playlist', '--yes-playlist', '--simulate', '--dump-single-json',
+            '--no-lazy-playlist', '--abort-on-error',
+            '--extractor-args', 'youtube:raise_incomplete_data=true', '--', canonical_url])
+    except OSError:
+        raise ValueError('Could not start playlist discovery; check the installed yt-dlp executable') from None
+    if completed.returncode in (-signal.SIGINT, 130):
+        raise KeyboardInterrupt
+    if completed.returncode:
+        raise ValueError(f'Playlist discovery failed (yt-dlp exit status {completed.returncode}); no entries imported')
+    # Warnings can include exhausted page retries while yt-dlp still exits zero.
+    # Refuse conservatively without echoing untrusted diagnostics or local paths.
+    if completed.stderr.strip():
+        raise ValueError('yt-dlp reported discovery diagnostics; completeness is unverified; no entries imported')
+    document = playlist_document(completed.stdout)
+    entries = playlist_entries(document, source['id'])
+    source.update(title=document.get('title'), description=document.get('description'),
+                  discovered_entries=len(entries), unique_valid_ids=len({e['id'] for e in entries if valid_id(e['id'])}),
+                  discovery='complete')
     return entries
 
 
@@ -147,7 +280,8 @@ def apply_entries(entries, library, report):
                     continue
                 active = entry
                 entry['outcome'] = 'not_processed'
-                print(f"Capturing line {entry['line']}: {entry['id']}", file=sys.stderr, flush=True)
+                location = f"playlist position {entry['position']}" if 'position' in entry else f"line {entry['line']}"
+                print(f"Capturing {location}: {entry['id']}", file=sys.stderr, flush=True)
                 result_path = Path(temporary) / 'result.json'
                 if result_path.exists():
                     result_path.unlink()
@@ -203,14 +337,26 @@ def emit(report, as_json):
     if as_json:
         print(json.dumps(report, ensure_ascii=False))
         return
+    source = report.get('source', {})
+    if source.get('type') == 'playlist':
+        print(f"Source: public YouTube playlist {source.get('id') or '(unresolved)'}")
+        print(f"Playlist URL: {json.dumps(source['url'], ensure_ascii=False)}")
+        if source.get('title') is not None:
+            print(f"Playlist title: {json.dumps(source['title'], ensure_ascii=False)}")
+        if source.get('description') is not None:
+            print(f"Playlist description: {json.dumps(source['description'], ensure_ascii=False)}")
+        print(f"Discovery: {source['discovery']}; discovered entries: {source.get('discovered_entries', 0)}; "
+              f"unique valid video IDs: {source.get('unique_valid_ids', 0)}")
     print(f"{'Apply' if report['apply'] else 'Preview'} library: {report['library'] or '(unresolved)'}")
     if not report['apply']:
         print('Would create is a plan only; video availability has not been checked.')
     for entry in report['entries']:
         detail = entry.get('message') or entry.get('path') or ''
         if 'duplicate_of' in entry:
-            detail = f"first occurrence: line {entry['duplicate_of']}"
-        print(f"Line {entry['line']}: {outcome_label(entry['outcome'])}: "
+            unit = 'position' if 'position' in entry else 'line'
+            detail = f"first occurrence: {unit} {entry['duplicate_of']}"
+        location = f"Position {entry['position']}" if 'position' in entry else f"Line {entry['line']}"
+        print(f"{location}: {outcome_label(entry['outcome'])}: "
               f"{entry['id'] or entry['input']}" + (f' — {detail}' if detail else ''))
     print('Summary: ' + ', '.join(f"{outcome_label(name)}: {count}"
                                 for name, count in report['summary'].items()))
@@ -223,7 +369,9 @@ def emit(report, as_json):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--file', required=True, type=Path, help='UTF-8 TXT input')
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--file', type=Path, help='UTF-8 TXT input')
+    source.add_argument('--playlist', help='Public YouTube playlist URL (discovery requires network)')
     parser.add_argument('--output', type=Path, help='Library root (default: configured library)')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--apply', action='store_true', help='Create missing bookmarks')
@@ -234,15 +382,23 @@ def main(argv=None):
     report = dict(report_version=1, apply=args.apply, library=None, entries=[], errors=[],
                   interrupted=False, index=dict(status='not_requested'), exit_status=2)
     try:
-        report['entries'] = read_txt(args.file.expanduser())
+        if args.playlist is None:
+            report['entries'] = read_txt(args.file.expanduser())
+        else:
+            report['source'] = dict(type='playlist', url=args.playlist, discovery='pending')
+            playlist_id, canonical_url = playlist_url(args.playlist)
+            report['source']['id'] = playlist_id
         selected = args.output.expanduser() if args.output is not None else default_library()
         library = selected.resolve()
         report['library'] = str(library)
         if library.name == 'bookmarks':
             raise ValueError('Output must be the library root, not bookmarks/')
         existing = inventory(library)
+        if args.playlist is not None:
+            report['entries'] = discover_playlist(canonical_url, report['source'])
         for entry in report['entries']:
-            if entry['outcome'] == 'not_processed':
+            if (entry['outcome'] == 'not_processed'
+                    or (args.playlist is not None and entry['outcome'] == 'unavailable' and entry['id'] in existing)):
                 if entry['id'] in existing:
                     entry.update(outcome='skipped_existing', path=existing[entry['id']])
                 else:
@@ -278,8 +434,12 @@ def main(argv=None):
         report['errors'].append('Interrupted; completed bookmarks are preserved; rebuild the index offline if needed')
         if report['index']['status'] == 'pending':
             report['index']['status'] = 'interrupted'
+        if report.get('source', {}).get('discovery') == 'pending':
+            report['source']['discovery'] = 'interrupted'
     except (OSError, ValueError) as exc:
         report['errors'].append(str(exc))
+        if report.get('source', {}).get('discovery') == 'pending':
+            report['source']['discovery'] = 'failed'
     if args.apply:
         for entry in report['entries']:
             if entry['outcome'] == 'would_create':

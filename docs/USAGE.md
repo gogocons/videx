@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [Usage](USAGE.md) · [Development](DEVELOPMENT.md) · [Data formats](DATA_FORMATS.md) · [Safety](SAFETY.md)
 
-Run commands from the repository root. Replace `VIDEO_ID` or `AAAAAAAAAAA` with an actual 11-character YouTube video ID and `/path/to/library` with your library root. Capture and refresh use the network; the local workflows below work offline. Videx saves metadata and thumbnails, not videos or transcripts.
+Run commands from the repository root. Replace `VIDEO_ID` or `AAAAAAAAAAA` with an actual 11-character YouTube video ID and `/path/to/library` with your library root. Capture, refresh, and playlist discovery use the network; TXT previews and local maintenance work offline. Videx saves metadata and thumbnails, not videos or transcripts.
 
 ## Library configuration
 
@@ -34,17 +34,22 @@ The capture option `-o DIR` is an alias for `--output DIR`. Index and upgrade co
 
 ## Capture and refresh
 
-For a backlog, use the separate TXT importer:
+For a backlog or public playlist, use the bulk importer:
 
 ```bash
 python3 -B scripts/yt-bookmark-import.py --file backlog.txt --dry-run
 python3 -B scripts/yt-bookmark-import.py --file backlog.txt --apply
 python3 -B scripts/yt-bookmark-import.py --file backlog.txt --output '/path/to/library' --apply --no-re-index --json
+python3 -B scripts/yt-bookmark-import.py --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'
+python3 -B scripts/yt-bookmark-import.py --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID' --apply
 ```
 
-Preview is the default and works offline without writes. Apply reuses existing
+Choose exactly one of `--file` and `--playlist`; replace `PLAYLIST_ID` with an
+actual public playlist ID. Preview is the default. TXT preview works offline;
+playlist preview requires network access for flat discovery. Neither writes to
+the library or fetches individual video metadata. Apply reuses existing
 bookmarks and rebuilds the index once after creating bookmarks. See the
-[complete TXT format and recovery reference](BATCH_IMPORT.md). Importer `--apply`
+[complete batch format, playlist discovery, and recovery reference](BATCH_IMPORT.md). Importer `--apply`
 authorizes new captures; single-video capture below retains its existing behavior.
 
 From the repository root, run:
