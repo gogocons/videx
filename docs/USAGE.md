@@ -34,6 +34,19 @@ The capture option `-o DIR` is an alias for `--output DIR`. Index and upgrade co
 
 ## Capture and refresh
 
+For a backlog, use the separate TXT importer:
+
+```bash
+python3 -B scripts/yt-bookmark-import.py --file backlog.txt --dry-run
+python3 -B scripts/yt-bookmark-import.py --file backlog.txt --apply
+python3 -B scripts/yt-bookmark-import.py --file backlog.txt --output '/path/to/library' --apply --no-re-index --json
+```
+
+Preview is the default and works offline without writes. Apply reuses existing
+bookmarks and rebuilds the index once after creating bookmarks. See the
+[complete TXT format and recovery reference](BATCH_IMPORT.md). Importer `--apply`
+authorizes new captures; single-video capture below retains its existing behavior.
+
 From the repository root, run:
 
 ```bash

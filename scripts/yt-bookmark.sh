@@ -40,6 +40,7 @@ APPLY=0
 TAGS=()
 ID_MODE=0
 URL=""
+BATCH_RESULT=""
 while (($#)); do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -47,6 +48,9 @@ while (($#)); do
       (($# >= 2)) || { echo 'ERROR: --output needs a directory' >&2; exit 2; }
       LIBRARY_DIR="$2"; EXPLICIT_OUTPUT=1; shift 2 ;;
     --overwrite) OVERWRITE=1; shift ;;
+    --batch-result)
+      (($# >= 2)) || exit 2
+      BATCH_RESULT="$2"; shift 2 ;;
     --apply) APPLY=1; shift ;;
     --tag)
       (($# >= 2)) && [[ -n "${2//[[:space:]]/}" ]] || { echo 'ERROR: --tag needs a nonempty value' >&2; exit 2; }
@@ -70,6 +74,30 @@ if (($#)); then
   URL="$1"
 fi
 [[ -n "$URL" ]] || { usage >&2; exit 2; }
+
+# Private importer contract; ordinary capture retains its existing behavior.
+batch_outcome=failed
+batch_fatal=false
+batch_path=""
+tmpdir=""
+finish_capture() {
+  local status=$?
+  if [[ -n "$tmpdir" ]]; then rm -rf -- "$tmpdir"; fi
+  if [[ -n "$BATCH_RESULT" ]]; then
+    python3 -B - "$BATCH_RESULT" "$batch_outcome" "$batch_fatal" "$batch_path" "$status" <<'PYRESULT'
+import json, sys
+from pathlib import Path
+target, outcome, fatal, path, status = sys.argv[1:]
+Path(target).write_text(json.dumps(dict(outcome=outcome, fatal=fatal == 'true', path=path or None, status=int(status))), encoding='utf-8')
+PYRESULT
+  fi
+  return "$status"
+}
+trap finish_capture EXIT
+if [[ -n "$BATCH_RESULT" ]] && (( !ID_MODE || OVERWRITE || RE_INDEX || ${#TAGS[@]} )); then
+  echo 'ERROR: Invalid internal batch capture options' >&2
+  exit 2
+fi
 
 command -v python3 >/dev/null || { echo 'ERROR: Missing python3' >&2; exit 1; }
 if (( ! EXPLICIT_OUTPUT )); then
@@ -99,6 +127,7 @@ PYID
   )" || exit 2
   URL="https://www.youtube.com/watch?v=$video_id"
 fi
+expected_id="${video_id:-}"
 for file in yt-bookmark-generate.py yt-bookmark-find.py yt-bookmark-tag.py; do
   [[ -f "$SCRIPT_DIR/$file" ]] || { echo "ERROR: Missing $file" >&2; exit 1; }
 done
@@ -203,9 +232,11 @@ tag_new() {
 existing=""
 lookup_status=0
 existing="$(lookup --url "$URL")" || lookup_status=$?
-if ((lookup_status == 2)); then exit 1; fi
-inventory_preflight || exit 1
+if ((lookup_status == 2)); then batch_fatal=true; exit 1; fi
+inventory_preflight || { batch_fatal=true; exit 1; }
 if ((lookup_status == 0 && !OVERWRITE)); then
+  batch_outcome=skipped_existing
+  batch_path="$existing"
   printf 'SKIPPED: Video already bookmarked: %s\n' "$existing"
   # Resolve the validated identity, including manually renamed bookmarks.
   if ((${#TAGS[@]})); then
@@ -229,10 +260,13 @@ fi
 
 command -v yt-dlp >/dev/null || { echo 'ERROR: Missing yt-dlp' >&2; exit 1; }
 tmpdir="$(mktemp -d)"
-trap 'rm -rf -- "$tmpdir"' EXIT
 
 printf '[1/4] Fetching metadata and thumbnail...\n'
-yt-dlp --no-playlist --skip-download --write-thumbnail --write-info-json \
+extractor_command=(yt-dlp)
+if [[ -n "$BATCH_RESULT" ]]; then
+  extractor_command+=(--ignore-config --no-cache-dir --no-mark-watched)
+fi
+"${extractor_command[@]}" --no-playlist --skip-download --write-thumbnail --write-info-json \
   --paths "$tmpdir" --output '%(title)s [%(id)s].%(ext)s' "$URL"
 
 printf '[2/4] Locating files...\n'
@@ -267,14 +301,18 @@ PY
 channel="$(printf '%s\n' "$fields" | sed -n '1p')"
 title="$(printf '%s\n' "$fields" | sed -n '2p')"
 video_id="$(printf '%s\n' "$fields" | sed -n '3p')"
+if [[ -n "$BATCH_RESULT" && "$video_id" != "$expected_id" ]]; then
+  echo 'ERROR: Extractor ID differs from requested video ID' >&2
+  exit 1
+fi
 
 # Recheck using yt-dlp's authoritative ID, including URLs that couldn't be
 # parsed locally and URLs that redirect to a different video.
 resolved_existing=""
 resolved_status=0
 resolved_existing="$(lookup --id="$video_id")" || resolved_status=$?
-if ((resolved_status == 2)); then exit 1; fi
-inventory_preflight || exit 1
+if ((resolved_status == 2)); then batch_fatal=true; exit 1; fi
+inventory_preflight || { batch_fatal=true; exit 1; }
 tag_preflight || exit 2
 if ((resolved_status == 0)); then
   if ((OVERWRITE)); then
@@ -282,6 +320,8 @@ if ((resolved_status == 0)); then
     printf 'REFRESH: Existing bookmark: %s\n' "$output"
   else
     printf 'SKIPPED: Video already bookmarked: %s\n' "$resolved_existing"
+    batch_outcome=skipped_existing
+    batch_path="$resolved_existing"
     tag_existing "$video_id"
     reindex
     exit 0
@@ -302,7 +342,11 @@ output, root = sys.argv[1:]
 print(os.path.relpath(os.path.join(root, "index.html"), os.path.dirname(output)))
 PYBACK
 )"
-python3 -B "$SCRIPT_DIR/yt-bookmark-generate.py" "$info_json" "$thumbnail" "$output" --back-link "$back_link"
+generator_command=(python3 -B "$SCRIPT_DIR/yt-bookmark-generate.py" "$info_json" "$thumbnail" "$output" --back-link "$back_link")
+if [[ -n "$BATCH_RESULT" ]]; then generator_command+=(--create-only); fi
+"${generator_command[@]}"
+batch_outcome=created
+batch_path="$output"
 printf '[4/4] Complete: %s\n' "$output"
 if ((resolved_status == 0)); then
   tag_existing "$video_id"

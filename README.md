@@ -33,8 +33,12 @@ Each standalone page contains a thumbnail, description, metadata, and links to t
 - Manage personal tags in a separate catalog, add tags during capture, and show searchable tag badges on index cards.
 - Audit identities and duplicates without changing files, with optional personal-tag and JSON reports.
 - Upgrade saved bookmark pages offline, using previews and backups, and keep your library outside the source repository.
+- Import a TXT backlog with read-only previews, duplicate checks, per-entry results, and one final index rebuild.
 
 Playlist importing and collections remain future work. Personal tagging, tag searching, and dedicated index tag filtering are implemented; see the [development history and roadmap](docs/DEVELOPMENT.md#future-roadmap) for context.
+
+Preview a TXT backlog with `python3 -B scripts/yt-bookmark-import.py --file backlog.txt`;
+add `--apply` to capture new bookmarks. See the [TXT format, examples, and recovery guide](docs/BATCH_IMPORT.md).
 
 ## Requirements
 
@@ -124,6 +128,7 @@ The tag tool also supports removing, replacing, and renaming tags, catalog-only 
 - [Development](docs/DEVELOPMENT.md) — Architecture, modules, testing, runtime validation, history, historical release notes, and roadmap.
 - [Data formats](docs/DATA_FORMATS.md) — Library layout, metadata, catalog and report schemas, identity, normalization, and compatibility.
 - [Safety](docs/SAFETY.md) — Filesystem checks, validation, backups, publication, failure statuses, and concurrency limits.
+- [TXT batch import](docs/BATCH_IMPORT.md) — Input format, preview/apply commands, reports, and recovery.
 
 ## License
 

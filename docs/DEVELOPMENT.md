@@ -14,6 +14,7 @@ The index is generated output; bookmark HTML and personal catalog data are persi
 videx/
 ├── scripts/
 │   ├── yt-bookmark.sh            # Capture bookmarks and optionally rebuild the index
+│   ├── yt-bookmark-import.py     # Preview/apply TXT batches using single-video capture
 │   ├── yt-bookmark-find.py       # Video-ID lookup and read-only library audit
 │   ├── yt-bookmark-tag.py        # Personal catalog management and tag reports
 │   ├── yt-bookmark-generate.py   # Render standalone HTML
@@ -30,6 +31,7 @@ videx/
 ```
 
 - `yt-bookmark.sh` coordinates extraction, duplicate checks, refreshes, tagging, and optional indexing.
+- `yt-bookmark-import.py` separates TXT discovery from ordered ID orchestration, with read-only planning, conservative failure reports, and once-per-batch indexing. Its private capture contract uses `--batch-result` for structured outcomes, isolated yt-dlp options, expected-ID checks, and generator `--create-only` publication. These internal flags are not part of the ordinary capture workflow. Future playlist discovery can supply the same normalized source records; no Collection schema is introduced.
 - `yt-bookmark-find.py` provides offline URL/ID lookup, identity auditing, and opt-in personal-tag reports.
 - `yt-bookmark-tag.py` validates and manages catalog data and provides catalog-only lookup and inventory reports.
 - `yt-bookmark-generate.py` renders standalone HTML from explicit metadata, thumbnail, and output paths; `--back-link` accepts a relative index path.
@@ -59,6 +61,12 @@ bash -n scripts/yt-bookmark.sh
 Tests use disposable synthetic libraries, never your configured library. The `-B` option suppresses bytecode output. No network, yt-dlp installation, browser, or additional test framework is required. Optional Deno or Node.js enables real JavaScript `JSON.parse()` checks and the index interaction harness; these tests report skips if neither runtime is available. Deno was available and these checks ran for v0.4.0; Node.js was not available. The JavaScript harness does not replace browser rendering checks.
 
 These are recorded local release-preparation results. Sandbox restrictions may affect filesystem tests; report skips separately from passes. No broader platform matrix is claimed.
+
+TXT importer regressions live in `tests/test_bookmark_import.py` and run with
+`python3 -B -m unittest discover -s tests -p test_bookmark_import.py -v`.
+They use synthetic libraries and an executable yt-dlp stub, including a real
+interruption of a waiting synthetic capture; no configured library or network is used.
+See [batch import](BATCH_IMPORT.md) for the durable input and recovery contract.
 
 ## Development guidance
 

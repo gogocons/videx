@@ -10,6 +10,25 @@ These files are excluded from Git tracking by default. Your bookmark collection 
 
 `--apply` is operation-specific: catalog edits and upgrades preview by default; capture writes new bookmarks and automatically applies their requested tags. `--overwrite` refreshes existing HTML independently of existing-bookmark tag edits. Index generation writes its output without an apply flag. See [usage](USAGE.md) before running commands.
 
+## TXT batch import safety
+
+The [TXT importer](BATCH_IMPORT.md) previews by default without extraction or
+filesystem writes. Its `--apply` authorizes new captures only: existing IDs are
+reused, with no overwrite, tagging, or Collection assignment. Unsafe/incomplete
+inventories refuse or stop the batch; independent extraction failures can continue.
+Importer extraction ignores ambient yt-dlp configuration. Requested and extracted
+IDs must agree. Complete staged HTML is published with a create-only hard link,
+which refuses an existing destination even if it appeared after validation.
+Hard-link support is required; there is no overwrite fallback or library-wide lock.
+
+Completed bookmarks survive later failures. Indexing runs once after creation,
+including partial-success batches, unless suppressed; index failure preserves the
+previous index. Handled interruption stops the capture process group and reports
+partial progress. Hard termination may leave a stale index or staging files. Rerun
+the TXT file to skip saved IDs and retry remaining entries, then rebuild offline
+if needed. Exit statuses are `0` complete, `1` partial, `2` global refusal, and
+`130` interrupted. Generic extractor errors are not labeled definitively unavailable.
+
 ## Filesystem inspection
 
 Bookmark inspection never reads discovered file symlinks, dangling symlinks, FIFOs, sockets, devices, or other non-regular bookmark objects, and never descends through discovered directory symlinks. Collection roots must be real directories. Real subdirectories named `index.html` are traversed; generated index files are excluded case-insensitively, while bookmark candidates retain case-sensitive `.html` matching. Unrelated ordinary non-HTML files are ignored.

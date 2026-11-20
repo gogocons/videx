@@ -147,7 +147,7 @@ a{{color:#a9c5ff}}.top{{display:flex;justify-content:space-between;align-items:c
 </main></body></html>'''
 
 
-def write_atomic(output, content):
+def write_atomic(output, content, create_only=False):
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     name = None
@@ -155,7 +155,12 @@ def write_atomic(output, content):
         with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=output.parent, prefix='.bookmark-', suffix='.tmp', delete=False) as f:
             name = f.name
             f.write(content)
-        os.replace(name, output)
+        if create_only:
+            # Same-directory hard linking publishes the complete file without
+            # replacing any destination that appeared since validation.
+            os.link(name, output)
+        else:
+            os.replace(name, output)
     finally:
         if name and os.path.exists(name):
             os.unlink(name)
@@ -168,6 +173,7 @@ def main():
     p.add_argument('thumbnail', type=Path)
     p.add_argument('output', type=Path)
     p.add_argument('--back-link', help='Relative path to collection index.html')
+    p.add_argument('--create-only', action='store_true', help=argparse.SUPPRESS)
     args = p.parse_args()
     try:
         previous = args.output.lstat()
@@ -177,6 +183,8 @@ def main():
         p.error(f'Cannot inspect destination: {exc}')
     if previous is not None and not stat.S_ISREG(previous.st_mode):
         p.error('Refusing to replace a non-regular bookmark (symlink, directory, or special file)')
+    if previous is not None and args.create_only:
+        p.error('Create-only destination already exists')
     metadata = loads_metadata(args.info_json.read_text(encoding='utf-8'))
     mime = mimetypes.guess_type(args.thumbnail.name)[0] or 'application/octet-stream'
     image_uri = f'data:{mime};base64,' + base64.b64encode(args.thumbnail.read_bytes()).decode('ascii')
@@ -192,7 +200,10 @@ def main():
             p.error(f'Cannot read existing bookmark: {exc}')
         if existing_id != video_id:
             p.error('Existing bookmark identity differs from incoming metadata; refusing to replace')
-    write_atomic(args.output, document)
+    if args.create_only:
+        write_atomic(args.output, document, create_only=True)
+    else:
+        write_atomic(args.output, document)
     print(f'Generated: {args.output}')
 
 
