@@ -1,6 +1,6 @@
 # Videx usage
 
-[Back to README](../README.md) · [Usage](USAGE.md) · [Development](DEVELOPMENT.md) · [Data formats](DATA_FORMATS.md) · [Safety](SAFETY.md)
+[Back to README](../README.md) · [Usage](USAGE.md) · [Development](DEVELOPMENT.md) · [Data formats](DATA_FORMATS.md) · [Safety](SAFETY.md) · [Batch import](BATCH_IMPORT.md)
 
 Run commands from the repository root. Replace `VIDEO_ID` or `AAAAAAAAAAA` with an actual 11-character YouTube video ID and `/path/to/library` with your library root. Capture, refresh, and playlist discovery use the network; TXT previews and local maintenance work offline. Videx saves metadata and thumbnails, not videos or transcripts.
 
@@ -50,7 +50,10 @@ playlist preview requires network access for flat discovery. Neither writes to
 the library or fetches individual video metadata. Apply reuses existing
 bookmarks and rebuilds the index once after creating bookmarks. See the
 [complete batch format, playlist discovery, and recovery reference](BATCH_IMPORT.md). Importer `--apply`
-authorizes new captures; single-video capture below retains its existing behavior.
+authorizes new captures. Bulk import accepts `--no-re-index` to suppress the default
+final rebuild, and has no `--re-index` option. A batch with no new bookmarks does
+not rebuild. Individual capture below rebuilds only with explicit `--re-index`
+and does not accept `--no-re-index` or `--dry-run`.
 
 From the repository root, run:
 
@@ -103,6 +106,17 @@ IDs beginning with one or two hyphens are valid. Capture uses its existing two-a
 Capture `--id TEXT` accepts a bare ID or one distinct bracketed ID in text. Multiple distinct bracketed IDs are rejected. Supply one URL or one `--id TEXT` input. Capture does not import playlists.
 
 Tag values follow the [normalization rules](DATA_FORMATS.md#personal-tag-normalization). See [capture validation](SAFETY.md#capture-and-generator-validation) for preflight checks and catalog independence when no tags are requested.
+
+## Lower-level offline generation
+
+The generator renders one bookmark from an existing metadata JSON file and thumbnail, without yt-dlp or network access. It takes three required positional paths and an optional relative back link:
+
+```bash
+python3 -B scripts/yt-bookmark-generate.py /path/to/info.json /path/to/thumbnail.png '/path/to/library/bookmarks/Synthetic/Example [AAAAAAAAAAA].html' --back-link ../../index.html
+python3 -B scripts/yt-bookmark-index.py '/path/to/library'
+```
+
+For a disposable demonstration library, supply synthetic metadata such as `{"id":"AAAAAAAAAAA","title":"Example","uploader":"Synthetic"}` and a synthetic thumbnail. Replace the example paths with those fixtures and a separate temporary library. The generator creates parent directories and writes HTML immediately; it has no preview/`--apply` mode. A matching existing regular bookmark can be replaced without an upgrade backup. It does not add personal tags or rebuild the index. Here and in older CLI messages, “collection index” means the library index, not the planned Collections feature.
 
 ## Rebuild and browse the offline index
 
@@ -246,7 +260,7 @@ python3 -B scripts/yt-bookmark-upgrade.py '/path/to/library' --apply
 
 See [upgrade failure handling](SAFETY.md#offline-upgrades) before applying a mixed-result preview.
 
-## Moving an existing collection
+## Moving an existing library
 
 1. Back up your current library before moving anything. Quit any programs editing the files.
 2. Create a directory for your external library, such as `~/Documents/Video Bookmarks/`. Move **the entire `bookmarks/` directory**, `catalog.json`, any `catalog.json.bak-*` files, and `index.html` from the project root into it. Do not move scripts or Git files.
@@ -266,4 +280,4 @@ See [upgrade failure handling](SAFETY.md#offline-upgrades) before applying a mix
 | An old index remains after failure | Inspect the command's error/status. Failed rebuilds deliberately retain the previous index, which may still contain now-hidden entries. |
 | Back to Library fails after moving files | Preserve the indexed archive tree and move the complete library together; verify the link after rebuilding. |
 
-Use `--help` on capture, index, find, tag, upgrade, or the lower-level generator for their supported options. For index and audit commands, missing bookmark directories are not created automatically.
+Use `--help` on capture, import, index, find, tag, upgrade, or the lower-level generator for their supported options. For index and audit commands, missing bookmark directories are not created automatically.

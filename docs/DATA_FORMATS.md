@@ -1,6 +1,6 @@
 # Videx data formats
 
-[Back to README](../README.md) · [Usage](USAGE.md) · [Development](DEVELOPMENT.md) · [Data formats](DATA_FORMATS.md) · [Safety](SAFETY.md)
+[Back to README](../README.md) · [Usage](USAGE.md) · [Development](DEVELOPMENT.md) · [Data formats](DATA_FORMATS.md) · [Safety](SAFETY.md) · [Batch import](BATCH_IMPORT.md)
 
 ## Library structure
 
@@ -59,7 +59,7 @@ The loader requires an object with version `1`, a `bookmarks` object, and a `col
 
 Catalog object members must have unique decoded keys at every nesting level, including objects inside arrays, reserved collections data, and unknown fields. Identical and conflicting duplicates are both rejected. Escaped spellings such as `"tags"` and `"\u0074ags"` are the same decoded key; keys are not trimmed, casefolded, or Unicode-normalized. Case-distinct IDs and keys remain distinct. Unambiguous unknown fields remain preserved by ordinary tag mutations. This catalog rule does not change bookmark metadata's separate duplicate-member compatibility below.
 
-`collections` is reserved structure required by the catalog format. User-facing collection management and collection browsing are future work; the presence of this object does not implement those capabilities.
+`collections` is reserved structure required by the catalog format. User-facing [Collection management and browsing](DEVELOPMENT.md#planned-collections) are planned; the presence of this object does not implement those capabilities.
 
 ## Personal tag normalization
 
@@ -71,13 +71,15 @@ Index badges and opt-in reports use normalized tags without rewriting catalog co
 
 ## Identity resolution
 
-Video IDs are case-sensitive 11-character strings containing letters, digits, `_` or `-`. A filename ID must agree with embedded metadata. Renamed bookmarks use their metadata ID; legacy filename-only bookmarks remain supported by lookup and tagging only when the metadata element is absent. Present but malformed metadata never falls back to the filename. Lookup and catalog changes refuse conflicting, ambiguous, or incomplete inventories (status `2`); capture stops on lookup failure and validates the extractor's unchanged ID before writing. Indexing and offline upgrades warn and skip damaged or conflicting pages, including legacy pages lacking the metadata they require. Audit reports conflicts separately from resolved IDs. No identity is automatically repaired.
+Video IDs are case-sensitive 11-character strings containing letters, digits, `_` or `-`. A filename ID must agree with embedded metadata. Renamed bookmarks use their metadata ID; legacy filename-only bookmarks remain supported by lookup and tagging only when the metadata element is absent. Present but malformed metadata never falls back to the filename. Lookup and catalog changes refuse conflicting, ambiguous, or incomplete inventories (status `2`); capture stops on lookup failure and validates the extractor's resolved ID before writing. Ordinary capture can follow an extractor-resolved redirect and rechecks that ID against the library; bulk import additionally requires the extracted ID to equal the requested ID. Indexing and offline upgrades warn and skip damaged or conflicting pages, including legacy pages lacking the metadata they require. Audit reports conflicts separately from resolved IDs. No identity is automatically repaired.
 
 Embedded and incoming metadata JSON reject repeated `id` keys even when their values match; other repeated keys retain their existing last-value behavior. Multiple or unterminated metadata elements are invalid. Filename identity is taken from a trailing `[VIDEO_ID].html`; IDs themselves remain case-sensitive.
 
 Leading-hyphen IDs are valid data. Their CLI syntax differs by command; preserve the [capture/lookup examples](USAGE.md#capture-and-refresh) and [tag argument ordering](USAGE.md#personal-catalog-management).
 
 ## JSON report version 1
+
+This section describes lookup/audit reports. The importer has a separate [report version 1 contract](BATCH_IMPORT.md#reports-and-recovery); its `--json` does not require `--show-tags`.
 
 `--json` requires `--show-tags` and emits one JSON document with `report_version: 1`, `operation`, `library`, `catalog.status`, `bookmarks` (`id`, absolute `paths`, `tags`), `issues`, and `exit_status`. Audit JSON also includes `summary` counts. Catalog status is `present`, `missing`, `unavailable`, or `not_read`. Missing catalogs/records yield empty tag lists and are never created. Tag whitespace, case-insensitive deduplication, and `hidden` normalization match the tag utility; catalog contents are not changed.
 
@@ -89,4 +91,4 @@ Catalog failures retain audit findings, include a `CATALOG_ERROR` issue, and rep
 
 Catalog schema **1**, bookmark metadata schema **2**, and JSON report version **1** remain unchanged. No automatic library migration or recapture is required for current tag search and visibility behavior. Legacy filename-only bookmarks remain usable for lookup/tagging when metadata is absent; indexing/upgrading require embedded metadata. Rebuild the index explicitly to include current catalog tags and search behavior.
 
-Offline upgrades regenerate HTML from existing embedded metadata and thumbnails; they do not contact YouTube or fetch missing content. See [upgrade workflow](USAGE.md#offline-bookmark-upgrades), [upgrade safety](SAFETY.md#offline-upgrades), and [moving an existing collection](USAGE.md#moving-an-existing-collection).
+Offline upgrades regenerate HTML from existing embedded metadata and thumbnails; they do not contact YouTube or fetch missing content. See [upgrade workflow](USAGE.md#offline-bookmark-upgrades), [upgrade safety](SAFETY.md#offline-upgrades), and [moving an existing library](USAGE.md#moving-an-existing-library).

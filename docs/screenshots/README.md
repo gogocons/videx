@@ -1,5 +1,7 @@
 # Documentation screenshots
 
+[Back to README](../../README.md) · [Development](../DEVELOPMENT.md)
+
 `library.png` and `bookmark.png` are the current documentation screenshots,
 representing the refreshed Videx demo and current interface, including selective
 personal tags in the library. They have passed technical and privacy verification
@@ -10,8 +12,10 @@ current screenshots. These screenshots are not pixel-exact current UI tests.
 
 ## Firefox capture recipe
 
-1. Open this repository's `demo/index.html`, or an individual HTML bookmark under
-   `demo/bookmarks/`, in Firefox. Do not use a personal bookmark library.
+1. Prepare a disposable synthetic library with the [offline generator](../USAGE.md#lower-level-offline-generation)
+   and index command, then open its `index.html` or an individual bookmark in Firefox.
+   The repository does not ship a demo library; `demo/` is an optional Git-ignored
+   local directory, not a prerequisite. Do not use a personal bookmark library.
 2. Enable **Tools → Browser Tools → Responsive Design Mode** and select
    **Laptop with HiDPI screen**. Verify **1440 × 900 CSS pixels** and **DPR 2**;
    preset names and saved settings alone are insufficient evidence.
@@ -20,7 +24,8 @@ current screenshots. These screenshots are not pixel-exact current UI tests.
    `[window.innerWidth, window.innerHeight, window.devicePixelRatio]` returns
    `[1440, 900, 2]`. RDM preview scaling is separate from page zoom.
 4. Use the page's dark presentation. Reset scroll to the top, clear search,
-   select **All channels** and **Newest upload** for the library overview.
+   select **All Channels**, **All Personal Tags**, and **Newest upload** for the
+   library overview, then close Filters.
    Wait for thumbnails and fonts to render. Move the pointer away from cards so
    hover scaling is inactive; avoid focused controls and open menus.
 5. Use RDM's screenshot control to capture **viewport page content only**.
@@ -38,14 +43,14 @@ current screenshots. These screenshots are not pixel-exact current UI tests.
    clipping, colors and transparent corners. Check visible pixels for personal
    information: metadata removal cannot remove information shown in the image.
 
-The installed Firefox 160.0 bundled preset inspected during the audit specified
+A recorded inspection of the Firefox 160.0 bundled preset found
 1440 × 900, DPR 2, no touch, and no user-agent override. Historical raw captures
 were not found in the repository; their dimensions and zoom cannot be proven.
 No browser automation is introduced by this workflow.
 
-The canonical demo is `demo/`, currently ignored by Git. The capture process does
-not rebuild or change it. Its index may need a separately authorized rebuild to
-show current personal tags. Rebuilding inserts a timestamp; browser/font versions
+A local demo may use the Git-ignored `demo/` directory or a separate temporary
+library. Screenshot capture does not rebuild or change that library. Rebuild its
+index separately when preparing the desired current state. Rebuilding inserts a timestamp; browser/font versions
 and thumbnail encoders also affect repeatability. Record these rather than
 expecting identical pixels across platforms or versions.
 

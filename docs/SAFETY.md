@@ -1,6 +1,6 @@
 # Videx safety and failure handling
 
-[Back to README](../README.md) · [Usage](USAGE.md) · [Development](DEVELOPMENT.md) · [Data formats](DATA_FORMATS.md) · [Safety](SAFETY.md)
+[Back to README](../README.md) · [Usage](USAGE.md) · [Development](DEVELOPMENT.md) · [Data formats](DATA_FORMATS.md) · [Safety](SAFETY.md) · [Batch import](BATCH_IMPORT.md)
 
 ## Scope and library backups
 
@@ -40,7 +40,7 @@ creation is performed. See [discovery completeness limits](BATCH_IMPORT.md#publi
 
 ## Filesystem inspection
 
-Bookmark inspection never reads discovered file symlinks, dangling symlinks, FIFOs, sockets, devices, or other non-regular bookmark objects, and never descends through discovered directory symlinks. Collection roots must be real directories. Real subdirectories named `index.html` are traversed; generated index files are excluded case-insensitively, while bookmark candidates retain case-sensitive `.html` matching. Unrelated ordinary non-HTML files are ignored.
+Bookmark inspection never reads discovered file symlinks, dangling symlinks, FIFOs, sockets, devices, or other non-regular bookmark objects, and never descends through discovered directory symlinks. Bookmark tree roots must be real directories. Real subdirectories named `index.html` are traversed; generated index files are excluded case-insensitively, while bookmark candidates retain case-sensitive `.html` matching. Unrelated ordinary non-HTML files are ignored.
 
 The shared scanner records unsupported discovered symlinks as inventory issues without following them. Special objects with bookmark-candidate `.html` names are rejected without reading; unrelated non-HTML objects are not bookmark candidates. A discovered generated `index.html` entry is excluded case-insensitively unless it is a real directory, which is traversed.
 
@@ -58,7 +58,7 @@ Tag `report` can show partial inspection results, while `list` reads only the ca
 
 Requested tags follow the [normalization and validation rules](DATA_FORMATS.md#personal-tag-normalization). Tagged capture validates tags and catalog state before extraction and rechecks the catalog before a bookmark write. Invalid inputs leave existing bookmarks/catalogs unchanged. Untagged capture does not read the catalog unless `--re-index` is requested.
 
-Capture stops on unsafe lookup failure. It checks the extractor's resolved ID and rechecks the inventory before writing. The lower-level generator validates the rendered identity and requires an existing regular-file destination to resolve to the same ID; a refresh cannot silently replace a different identity. The shell capture wrapper maps lookup/inventory refusal to status `1` in those paths, rather than universally preserving the helper's status `2`.
+Capture stops on unsafe lookup failure. It validates the extractor's resolved ID and rechecks the inventory before writing. Ordinary capture can follow redirects to a different resolved video ID; the importer additionally refuses a requested/extracted ID mismatch. The lower-level generator validates the rendered identity and requires an existing regular-file destination to resolve to the same ID; a refresh cannot silently replace a different identity. The shell capture wrapper maps lookup/inventory refusal to status `1` in those paths, rather than universally preserving the helper's status `2`.
 
 The generator rejects existing symlink, directory, or special-file bookmark destinations with controlled status `2`, before reading them or staging output. New destinations and matching regular-file refreshes remain supported.
 

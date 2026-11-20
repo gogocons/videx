@@ -35,7 +35,7 @@ Each standalone page contains a thumbnail, description, metadata, and links to t
 - Upgrade saved bookmark pages offline, using previews and backups, and keep your library outside the source repository.
 - Import a TXT backlog or public YouTube playlist with read-only previews, duplicate checks, per-entry results, and one final index rebuild.
 
-Collections remain future work. Personal tagging, tag searching, and dedicated index tag filtering are implemented; see the [development history and roadmap](docs/DEVELOPMENT.md#future-roadmap) for context.
+Collections remain future work. Personal tagging, tag searching, and dedicated index tag filtering are implemented; see the [current status and roadmap](docs/DEVELOPMENT.md#current-status-and-tracking). The v0.4.0 badge identifies the recorded release snapshot; current source also includes subsequent filtering and import work.
 
 Preview a TXT backlog with `python3 -B scripts/yt-bookmark-import.py --file backlog.txt`;
 or preview a public playlist with `python3 -B scripts/yt-bookmark-import.py --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'`.
@@ -121,14 +121,14 @@ The tag tool also supports removing, replacing, and renaming tags, catalog-only 
 - **Destination:** Capture `--output DIR` selects a library root and can create directories. Check the configured or explicit path before your first capture. Index and audit commands do not create missing bookmark directories.
 - **Existing bookmarks:** Existing IDs are skipped by default, even after title/channel changes. `--overwrite` refreshes HTML at its existing path; ambiguous matches are refused.
 - **Preview versus writes:** Catalog edits and upgrades preview by default; `--apply` saves those changes. Capture writes new bookmarks and automatically saves their requested tags. For existing capture tags, `--apply` controls tag edits independently of HTML refresh with `--overwrite`.
-- **Index updates:** Capture rebuilds only with `--re-index`, including after a skip. Rebuild explicitly after upgrades, applied catalog/visibility changes, or index search-code updates. Tag commands never rebuild automatically.
+- **Index updates:** Individual capture rebuilds only with `--re-index`, including after a skip. Applied bulk imports rebuild once after creating bookmarks by default; use `--no-re-index` to suppress that rebuild. No-new-bookmark batches and previews do not rebuild. Rebuild explicitly after upgrades, applied catalog/visibility changes, or index search-code updates. Tag commands never rebuild automatically.
 - **Visibility:** The normalized personal tag `hidden` excludes a bookmark from the rebuilt index, not from files, catalogs, or CLI reports. It is no security feature. Older copies may contain hidden entries; failed rebuilds retain the existing index.
 - **Backups:** Back up your library independently of the source repository. Generated library files are ignored by Git by default. Duplicate checks and audits do not replace backups; retain upgrade/catalog backups until verified.
 
 ## Documentation
 
 - [Usage](docs/USAGE.md) — Detailed commands, configuration, tag workflows, reports, moving libraries, and troubleshooting.
-- [Development](docs/DEVELOPMENT.md) — Architecture, modules, testing, runtime validation, history, historical release notes, and roadmap.
+- [Development and project tracking](docs/DEVELOPMENT.md) — Authoritative current status, completed milestones, roadmap, known issues, decisions, architecture, and testing. GitHub Issues are optional supplementary tracking.
 - [Data formats](docs/DATA_FORMATS.md) — Library layout, metadata, catalog and report schemas, identity, normalization, and compatibility.
 - [Safety](docs/SAFETY.md) — Filesystem checks, validation, backups, publication, failure statuses, and concurrency limits.
 - [Batch import](docs/BATCH_IMPORT.md) — TXT format, public playlists, preview/apply commands, reports, and recovery.

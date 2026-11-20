@@ -1,9 +1,9 @@
 # TXT and public playlist batch import
 
-[Back to README](../README.md) · [Usage](USAGE.md) · [Safety](SAFETY.md)
+[Back to README](../README.md) · [Usage](USAGE.md) · [Development](DEVELOPMENT.md) · [Data formats](DATA_FORMATS.md) · [Safety](SAFETY.md) · [Batch import](BATCH_IMPORT.md)
 
 Import a backlog or public YouTube playlist as individual standalone bookmarks.
-Collections remain future work. Both input adapters use the
+Collections remain [planned functionality](DEVELOPMENT.md#planned-collections). Both input adapters use the
 same capture, metadata curation, and HTML generation pipeline as single-video
 capture, without changing bookmark or catalog formats.
 
@@ -114,8 +114,10 @@ Checks do not lock the whole library: coordinate capture, moves, and other write
 
 After a batch creates bookmarks, the index is rebuilt once, including after partial
 success or a handled capture interruption, unless `--no-re-index` is supplied.
-No-new-bookmark batches do not rebuild. Index failures preserve completed bookmarks
-and the previous index. Existing catalog validation and `hidden` exclusion still
+No-new-bookmark batches do not rebuild. Unlike individual capture, bulk import
+does not accept `--re-index`: rebuilding after creation is already the default.
+`--no-re-index` suppresses it; previews never rebuild, even without that flag.
+Index failures preserve completed bookmarks and the previous index. Existing catalog validation and `hidden` exclusion still
 apply to the index.
 
 ## Reports and recovery

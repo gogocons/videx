@@ -1,5 +1,7 @@
 # Videx social-preview artwork
 
+[Back to README](../../README.md) · [Development](../DEVELOPMENT.md)
+
 This directory maintains the image used when sharing the Videx GitHub repository.
 It is optional, offline development tooling, independent of bookmark capture,
 index building, and Videx's runtime dependencies.
@@ -36,7 +38,7 @@ From another directory, invoke the same script using its absolute path.
 
 Requirements for PNG generation:
 
-- Python 3.8+ (standard library only; validated here with Python 3.15.2).
+- Python 3.8+ (standard library only; recorded validation used Python 3.15.2).
 - macOS with an installed, matching Swift toolchain and Apple SDK, including
   AppKit and WebKit; the Apple development tools must already be configured.
 - `sips`, included with macOS.
@@ -159,5 +161,5 @@ These tests use synthetic PNGs, disposable directories, and simulated tools. The
 cover deterministic SVG output, working directories, missing tools, timeouts,
 failed rendering/normalization, invalid PNGs, metadata cleanup, visual-review
 protection, and publication rollback without requiring native rendering tools.
-Native rendering and visual comparison should also be checked on the maintainer's
-Mac when changing the renderer or artwork.
+Native rendering and visual comparison should also be checked in a macOS
+environment meeting the requirements above when changing the renderer or artwork.
