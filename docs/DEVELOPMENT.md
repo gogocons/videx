@@ -127,8 +127,17 @@ tests. 319 passed, and the sandbox denied the Unix-socket fixture. The synthetic
 integration test captured from a stub playlist, reviewed and applied the report
 with extraction unavailable, and verified one catalog publication and an
 explicit rebuild with hidden bookmarks excluded from the generated payload.
-Final real-world library acceptance and the manual desktop and hidden-bookmark
-checks for this workflow remain pending.
+
+Milestones 1 and 2 passed user acceptance, including desktop browsing in Safari
+and Firefox. The user confirmed Collections acceptance is complete and manual
+hidden-bookmark verification passed in their main library.
+
+### Bookmark metadata layout validation
+
+An offline Firefox 161.0 headless check used an upgraded synthetic bookmark at
+1200, 550, and 320 CSS pixels. It confirmed three, two, and one column
+respectively, with the original field order and no horizontal overflow with a
+long channel name, long capture count, and missing like count.
 
 ## Development guidance
 
@@ -192,7 +201,6 @@ The following objectives have no assigned release or delivery date. Proposed pri
 
 1. **Qualify Linux and supported runtimes.** Run the offline suite and representative synthetic capture, lookup, tag, and index workflows on a real Linux environment. Record distribution, Python/Bash versions, optional dependencies, failures and skips. The historical macOS results do not establish a minimum supported Python version. Track reproducible portability defects separately; a broad CI matrix or new dependencies are not assumed.
 2. **Decide the upgrade partial-result contract.** Current mixed valid/skipped runs can return `0`; no candidates with skipped pages returns `1`. [Safety](SAFETY.md#offline-upgrades) records the exact behavior. Decide whether to retain it for compatibility or change it before calling it a defect. Any later change needs caller/compatibility review, all-valid, mixed, all-skipped and operational-error tests in preview and apply modes, and migration guidance. Preserve backups and preview defaults.
-3. **Complete final Collections acceptance.** Milestones 1 and 2 passed user acceptance, including desktop browsing in Safari and Firefox. Milestone 3 is implemented. Real-world library acceptance and manual hidden-bookmark verification remain pending.
 
 ### Collections milestones
 
@@ -210,7 +218,7 @@ All Bookmarks and Collections share **Newest**, **Oldest**, **Title A-Z**, **Tit
 
 Bind eligible reports to the canonical library path and the device/inode identity of both the library root and its `bookmarks/` directory. Revalidate the entire proposed membership against strict live inventory during preview and apply. A name conflict requires another name or skipping, including on repeated apply. Publish a new Collection with all members in one existing catalog mutation. Capture success survives later catalog failure. Keep playlist state in the report and preserve ordinary import and indexing defaults. Use `--no-re-index` during integrated import and explicitly rebuild once after approval and Collection creation. GUI management and automatic playlist synchronization are outside these milestones.
 
-Workflow and report details are in [Batch import](BATCH_IMPORT.md#playlist-to-collection) and [Data formats](DATA_FORMATS.md#playlist-collection-report-extension). Final real-world acceptance, including the Milestone 3 desktop workflow and manual hidden-bookmark verification, remains pending.
+Workflow and report details are in [Batch import](BATCH_IMPORT.md#playlist-to-collection) and [Data formats](DATA_FORMATS.md#playlist-collection-report-extension). See [the validation record](#collections-milestone-3-validation) for user acceptance.
 
 ### Deferred enhancements and investigation
 
@@ -245,7 +253,7 @@ The nine-item backlog prepared against v0.3.0 has been checked against current s
 | Define upgrade skipped-file statuses | Current behavior is documented; a decision on changing the contract remains open. |
 | Exclude `hidden` from index | Completed: all bookmark-specific index data, choices, grouping and counts exclude hidden IDs; all-hidden valid libraries publish an empty index. Files/catalog/CLI reports remain unchanged. Index regressions cover these distinctions. |
 | Add personal-tag filtering | Completed: free-text search includes tags; exact single-tag filtering combines with channel/search using AND. Earlier open search-scope questions are resolved by current implementation. |
-| Add Collections in stages | Manual management, offline index browsing, and optional playlist-derived creation are implemented. Final user acceptance is pending. |
+| Add Collections in stages | Manual management, offline index browsing, and optional playlist-derived creation are implemented. User acceptance is complete. |
 | Add playlist ingestion | Completed via the public-playlist importer. Continuation, statuses, and recovery are documented in [Batch import](BATCH_IMPORT.md#reports-and-recovery). Single capture still uses `--no-playlist`. |
 | Investigate catalog concurrency | Retained as a deferred investigation, with no new locking or transaction requirement approved. |
 

@@ -54,6 +54,17 @@ class InventoryTests(unittest.TestCase):
         self.assertTrue(available)
         self.assertEqual(inventory.read_bookmark_text(expected[0]), 'regular')
 
+    def test_read_can_preserve_line_endings_without_relaxing_utf8_validation(self):
+        path = self.collection / 'newlines.html'
+        text = 'Café\r\nSecond\rThird\n'
+        path.write_bytes(text.encode('utf-8'))
+        self.assertEqual(inventory.read_bookmark_text(path), 'Café\nSecond\nThird\n')
+        self.assertEqual(inventory.read_bookmark_text(path, preserve_newlines=True), text)
+        path.write_bytes(b'\xff\r\n')
+        for preserve_newlines in (False, True):
+            with self.subTest(preserve_newlines=preserve_newlines), self.assertRaises(UnicodeDecodeError):
+                inventory.read_bookmark_text(path, preserve_newlines=preserve_newlines)
+
     def test_links_and_fifo_are_not_read_or_traversed(self):
         target = self.root / 'external'
         target.mkdir()
@@ -68,11 +79,12 @@ class InventoryTests(unittest.TestCase):
         fifo = self.collection / 'pipe.html'
         os.mkfifo(fifo)
         before = snapshot(self.root)
-        with patch.object(Path, 'read_text', side_effect=AssertionError('must not read content')):
+        with patch.object(Path, 'open', side_effect=AssertionError('must not read content')):
             paths, issues, available = inventory.scan_bookmarks(self.collection)
             for path in (file_link, directory_link, dangling, fifo):
-                with self.subTest(path=path), self.assertRaises(OSError):
-                    inventory.read_bookmark_text(path)
+                for preserve_newlines in (False, True):
+                    with self.subTest(path=path, preserve_newlines=preserve_newlines), self.assertRaises(OSError):
+                        inventory.read_bookmark_text(path, preserve_newlines=preserve_newlines)
         self.assertEqual(paths, [])
         self.assertEqual({path for path, _ in issues}, {file_link, directory_link, dangling, fifo})
         self.assertTrue(available)

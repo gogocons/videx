@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import sys
@@ -209,8 +210,91 @@ class ConsumerTests(unittest.TestCase):
         backup, = self.root.glob('bookmarks-backup-*')
         self.assertEqual((backup / 'renamed.html').read_bytes(), original)
         self.assertEqual([path.name for path in backup.iterdir()], ['renamed.html'])
-        self.assertNotEqual(valid.read_bytes(), original)
+        self.assertEqual(valid.read_text(), generator.make_document({
+            'id': A, 'title': 'Synthetic title', 'uploader': 'Synthetic channel',
+        }, IMAGE, '../index.html'))
 
+    def test_upgrade_leaves_current_description_line_endings_untouched(self):
+        for identity, newline in ((A, '\r\n'), (B, '\r'), (C, '\n')):
+            description = f'Café{newline}Second line'
+            document = generator.make_document({
+                'id': identity, 'title': 'Newline fixture', 'description': description,
+            }, IMAGE, '../index.html').encode('utf-8')
+            self.assertIn(f'<div class="description">{description}</div>'.encode('utf-8'), document)
+            (self.collection / f'{identity}.html').write_bytes(document)
+
+        before = snapshot(self.root)
+        for options in ((), ('--apply',)):
+            with self.subTest(options=options):
+                status, stdout, stderr = self.invoke(upgrader, self.root, *options)
+                self.assertEqual(status, 0, stderr)
+                self.assertIn('0 bookmarks requiring upgrade; 3 already current; 0 skipped', stdout)
+                self.assertEqual(snapshot(self.root), before)
+
+    def test_upgrade_previous_bookmark_layout_preserves_archive_and_is_idempotent(self):
+        metadata = {
+            'id': A, 'title': 'Layout fixture', 'duration': 61.75, 'upload_date': '20250615',
+            'uploader': 'LongChannelName' * 12, 'view_count': 1234567890, 'like_count': 0,
+            'description': 'Captured text\r\nSecond line\rThird line',
+            'chapters': [{'title': 'Start', 'start_time': 0}],
+        }
+        info, thumbnail = self.root / 'info.json', self.root / 'thumb.png'
+        info.write_text(json.dumps(metadata), encoding='utf-8')
+        thumbnail.write_bytes(b'image')
+        fresh = self.root / 'fresh.html'
+        status, _, stderr = self.invoke(generator, info, thumbnail, fresh,
+                                        '--back-link', '../../index.html')
+        self.assertIsNone(status, stderr)
+        current = fresh.read_bytes().decode('utf-8')
+        self.assertIn('repeat(3,minmax(0,1fr))', current)
+        # Restore the previous presentation while keeping the same archived content.
+        previous, blocks = re.subn(
+            r'\n\.video-details\{.*?(?=\.stat\{)',
+            '.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:18px}',
+            current, flags=re.DOTALL,
+        )
+        self.assertEqual(blocks, 1)
+        previous = previous.replace('class="panel video-details"', 'class="panel"').replace(
+            'margin:0 0 18px;overflow-wrap:anywhere', 'margin:0 0 18px')
+        path = self.collection / 'Channel' / f'Layout [{A}].html'
+        path.parent.mkdir()
+        path.write_bytes(previous.encode('utf-8'))
+        (self.root / 'catalog.json').write_text(json.dumps({
+            'version': 1, 'bookmarks': {A: {'tags': ['keep']}},
+            'collections': {
+                '5bfa4a67-8796-45f6-96c3-b5deec914d16': {'name': 'Saved', 'members': [A]},
+            },
+        }), encoding='utf-8')
+        (self.root / 'index.html').write_bytes(b'previous index')
+
+        before = snapshot(self.root)
+        status, stdout, stderr = self.invoke(upgrader, self.root)
+        self.assertEqual(status, 0, stderr)
+        self.assertIn('1 bookmarks requiring upgrade', stdout)
+        self.assertEqual(snapshot(self.root), before)
+
+        inode = path.stat().st_ino
+        status, _, stderr = self.invoke(upgrader, self.root, '--apply')
+        self.assertEqual(status, 0, stderr)
+        self.assertNotEqual(path.stat().st_ino, inode)
+        backup, = self.root.glob('bookmarks-backup-*')
+        self.assertEqual((backup / path.relative_to(self.collection)).read_bytes(), previous.encode('utf-8'))
+        upgraded = path.read_bytes()
+        self.assertEqual(upgraded, current.encode('utf-8'))
+        archive = upgrader.ArchiveParser()
+        archive.feed(upgraded.decode('utf-8'))
+        self.assertEqual(strict_json_loads(''.join(archive.metadata)), metadata_tool.curate(metadata))
+        self.assertEqual(archive.thumbnail, IMAGE)
+        after = snapshot(self.root)
+        for name in ('catalog.json', 'index.html'):
+            self.assertEqual(after[name], before[name])
+
+        for options in ((), ('--apply',)):
+            with self.subTest(options=options):
+                status, stdout, stderr = self.invoke(upgrader, self.root, *options)
+                self.assertEqual(status, 0, stderr)
+                self.assertIn('0 bookmarks requiring upgrade; 1 already current; 0 skipped', stdout)
+                self.assertEqual(snapshot(self.root), after)
 
     def test_generation_rejects_repeated_id_keys_without_writing(self):
         info, thumbnail = self.root / 'info.json', self.root / 'thumb.png'
@@ -360,10 +444,10 @@ class FilesystemConsumerTests(unittest.TestCase):
         for failure in (PermissionError('denied'), FileNotFoundError('disappeared'), UnicodeError('bad encoding')):
             for module in (indexer, upgrader):
                 real_read = module.read_bookmark_text
-                def read(path):
+                def read(path, **options):
                     if path == later:
                         raise failure
-                    return real_read(path)
+                    return real_read(path, **options)
                 before = snapshot(self.root)
                 with self.subTest(module=module.__name__, failure=failure), \
                         patch.object(module, 'read_bookmark_text', side_effect=read), \

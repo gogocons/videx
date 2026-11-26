@@ -126,8 +126,13 @@ def make_document(metadata, image_uri, back_href=None):
 *{{box-sizing:border-box}}body{{margin:0}}main{{max-width:1060px;margin:0 auto;padding:24px 22px 70px}}
 a{{color:#a9c5ff}}.top{{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px}}.brand{{display:flex;align-items:center;gap:12px;font-weight:750;letter-spacing:-.02em;font-size:1.2rem}}.play{{display:inline-flex;align-items:center;justify-content:center;width:39px;height:39px;background:#d93636;color:white;border-radius:10px;font-weight:900;font-size:1.1rem;flex-shrink:0}}.secondary{{font-size:.9rem;text-decoration:none}}
 .intro{{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:26px;align-items:start;margin-bottom:6px}}.hero{{width:100%;aspect-ratio:16/9;object-fit:contain;background:#20242c;border-radius:14px;display:block}}.intro-content{{min-width:0}}h1{{font-size:clamp(1.5rem,3.2vw,2.35rem);line-height:1.2;letter-spacing:-.03em;margin:0 0 12px}}
-.byline{{color:#aab3c2;margin:0 0 18px}}.byline a{{text-decoration:none}}.actions{{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:0}}.button,button{{background:#d93636;color:white;border:0;border-radius:9px;padding:11px 15px;font:inherit;font-weight:650;text-decoration:none;cursor:pointer}}button{{background:#252c37;color:#e9edf4}}
-.panel{{background:#1b2029;border:1px solid #303745;border-radius:13px;padding:20px;margin-top:20px}}h2{{font-size:1.12rem;margin:0 0 16px}}.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:18px}}.stat{{min-width:0;display:flex;flex-direction:column;gap:4px}}.stat span{{font-size:.8rem;color:#9ca5b5}}.stat strong{{overflow-wrap:anywhere;font-size:.94rem}}
+.byline{{color:#aab3c2;margin:0 0 18px;overflow-wrap:anywhere}}.byline a{{text-decoration:none}}.actions{{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:0}}.button,button{{background:#d93636;color:white;border:0;border-radius:9px;padding:11px 15px;font:inherit;font-weight:650;text-decoration:none;cursor:pointer}}button{{background:#252c37;color:#e9edf4}}
+.panel{{background:#1b2029;border:1px solid #303745;border-radius:13px;padding:20px;margin-top:20px}}h2{{font-size:1.12rem;margin:0 0 16px}}
+.video-details{{container:video-details / inline-size}}
+.stats{{display:grid;grid-template-columns:minmax(0,1fr);gap:18px}}
+@container video-details (min-width:21rem){{.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+@container video-details (min-width:34rem){{.stats{{grid-template-columns:repeat(3,minmax(0,1fr))}}}}
+.stat{{min-width:0;display:flex;flex-direction:column;gap:4px}}.stat span{{font-size:.8rem;color:#9ca5b5}}.stat strong{{overflow-wrap:anywhere;font-size:.94rem}}
 @media(max-width:720px){{.intro{{grid-template-columns:1fr;gap:18px}}h1{{margin:0 0 12px}}}}
 .description{{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;font-size:.95rem}}.chapters{{list-style:none;margin:0;padding:0}}.chapters li{{padding:8px 0;border-bottom:1px solid #303745}}.chapters a{{text-decoration:none}}details summary{{cursor:pointer;font-weight:650}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.78rem;color:#bfc9da;max-height:400px;overflow:auto}}.foot{{color:#7f8a9b;font-size:.8rem;margin-top:26px}}
 </style></head><body><main>
@@ -137,7 +142,7 @@ a{{color:#a9c5ff}}.top{{display:flex;justify-content:space-between;align-items:c
 <div class="intro-content"><h1>{esc(title)}</h1><p class="byline">{channel}</p>
 <div class="actions">{watch}<button type="button" id="copy-url">Copy video URL</button></div></div>
 </section>
-<section class="panel"><h2>Video details</h2><div class="stats">{info}</div></section>
+<section class="panel video-details"><h2>Video details</h2><div class="stats">{info}</div></section>
 <section class="panel"><h2>Description</h2><div class="description">{timestamp_links(description,url)}</div></section>
 {chapter_section}
 <section class="panel"><details><summary>Archived metadata (curated JSON)</summary><pre id="raw-json"></pre></details></section>

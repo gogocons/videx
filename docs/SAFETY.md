@@ -143,6 +143,8 @@ Upgrade validates bookmark filesystem access before creating backups or replacin
 
 This content-skip behavior also covers rejected archival numbers. Invalid numeric pages are left unchanged and are not added to backup/replacement candidates. Other valid pages remain eligible, with the same mixed-result exit statuses below; numeric validation does not introduce an all-library transaction or automatic source normalization.
 
+Upgrade compares saved UTF-8 HTML with regenerated HTML while preserving the original line endings. A page that already matches is reported as current and creates no backup or rewrite, including when its rendered description contains CRLF or bare CR.
+
 All candidate originals are copied to a timestamped sibling `<bookmarks-directory-name>-backup-<timestamp>` folder before any replacement. The generator stages each rebuilt page in a unique sibling `.bookmark-*.tmp` file and replaces it atomically. This is per-file publication, not an all-library transaction.
 
 Upgrade exit statuses depend on whether candidates remain and whether writes fail:

@@ -335,6 +335,8 @@ python3 -B scripts/yt-bookmark-index.py
 
 The upgrade tool works entirely offline. Inspect its dry-run output before applying changes and retain backups until you verify the results. Index generation requires at least one valid bookmark.
 
+Upgrading applies the current standalone bookmark template, including the responsive Video details grid, to saved pages with supported embedded metadata and thumbnails. The grid shows three equal columns in a wide panel, two in a narrower panel, and one when space is tight. Pages using the previous layout are eligible. Pages that already match the generated output are left in place, and the library catalog is untouched.
+
 An explicit directory overrides configuration:
 
 ```bash

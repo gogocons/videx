@@ -79,7 +79,7 @@ def main():
     for path in paths:
         try:
             parser = ArchiveParser()
-            source = read_bookmark_text(path)
+            source = read_bookmark_text(path, preserve_newlines=True)
             video_id = resolve_identity(path.name, source)
             parser.feed(source)
             if not parser.metadata or not parser.thumbnail:

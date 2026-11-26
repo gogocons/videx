@@ -46,9 +46,12 @@ def scan_bookmarks(root):
     return sorted(paths), issues, not any(path == root for path, _ in issues)
 
 
-def read_bookmark_text(path):
+def read_bookmark_text(path, *, preserve_newlines=False):
     """Read UTF-8 only after checking that the final entry is a regular file."""
     path = Path(path)
     if not stat.S_ISREG(path.lstat().st_mode):
         raise OSError(f'{path}: bookmark must be a regular file, not a symlink or special file')
+    if preserve_newlines:
+        with path.open(encoding='utf-8', newline='') as source:
+            return source.read()
     return path.read_text(encoding='utf-8')
