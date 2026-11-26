@@ -59,7 +59,35 @@ The loader requires an object with version `1`, a `bookmarks` object, and a `col
 
 Catalog object members must have unique decoded keys at every nesting level, including objects inside arrays, reserved collections data, and unknown fields. Identical and conflicting duplicates are both rejected. Escaped spellings such as `"tags"` and `"\u0074ags"` are the same decoded key; keys are not trimmed, casefolded, or Unicode-normalized. Case-distinct IDs and keys remain distinct. Unambiguous unknown fields remain preserved by ordinary tag mutations. This catalog rule does not change bookmark metadata's separate duplicate-member compatibility below.
 
-`collections` is reserved structure required by the catalog format. User-facing [Collection management and browsing](DEVELOPMENT.md#planned-collections) are planned; the presence of this object does not implement those capabilities.
+`collections` is required. An empty object represents a catalog without Collections. A present file missing the key is invalid, while a missing file is treated as an empty catalog. Tag-only readers and writers continue treating the object contents as opaque.
+
+### Collection records
+
+```json
+{
+  "version": 1,
+  "bookmarks": {},
+  "collections": {
+    "5bfa4a67-8796-45f6-96c3-b5deec914d16": {
+      "name": "Field Notes",
+      "description": "Videos to revisit.",
+      "members": ["BBBBBBBBBBB", "AAAAAAAAAAA", "CCCCCCCCCCC"]
+    }
+  }
+}
+```
+
+Each key is a lowercase, hyphenated UUIDv4. An applied creation generates the ID, and renaming preserves it. A record requires `name` and `members` and may include `description`. Edits preserve unknown fields in valid records and elsewhere in the catalog. Collection-aware consumers validate every Collection before using the section. Malformed records, including opaque reserved payloads that do not follow this representation, cause a refusal. A well-formed member ID remains valid catalog data when its file is absent.
+
+Names use Unicode whitespace trimming and NFC normalization. After normalization they must contain 1–80 characters. Control characters, surrogate code points, and line and paragraph separators are invalid. Display case and interior spacing are preserved. Name lookup and uniqueness use `NFC(name.casefold())`; a case-only rename of the same record is valid. Descriptions normalize CRLF and CR to LF, trim outer whitespace, and allow internal newlines and tabs. Other control characters and surrogate code points are invalid. Omit absent or blank descriptions. Stored values must already be canonical.
+
+Members are distinct canonical case-sensitive video IDs. A bookmark may be in several Collections and needs no personal tag record. New members append in first-occurrence input order and removals preserve the surviving order. Empty arrays are valid. This order is a storage property. Existing schema-1 tag writers that round-trip the whole catalog preserve valid Collection records, including during tag pruning.
+
+### Collection JSON report version 1
+
+`collection OPERATION --json` emits one object with `report_version`, `operation`, `library` (absolute path or null), `catalog.status` (`present`, `missing`, `unavailable`, or `not_read`), `mode` (`read`, `preview`, or `apply`), `result`, `issues`, and `exit_status`. Result values are `ok`, `partial`, `would_change`, `applied`, `no_change`, `refused`, and `interrupted`. Issues contain a category and message and may carry relevant paths or IDs.
+
+`list` returns summaries in `collections`, each with `id`, `name`, and `member_count`. `show` returns the selected `collection` with its stored members, plus ordered `member_findings` with `id`, `status`, and absolute `paths`. Mutations carry `before` and `after` with the ID and documented record fields, using null for a missing side or for a proposed UUID in a creation preview. They also report `catalog.path`, `catalog.backup`, and `catalog.publication` (the latter is `not_published`, `published`, or `unknown`). The status field describes the catalog read at preflight. Argument syntax errors use argparse diagnostics.
 
 ## Personal tag normalization
 
@@ -71,7 +99,7 @@ Index badges and opt-in reports use normalized tags without rewriting catalog co
 
 ## Identity resolution
 
-Video IDs are case-sensitive 11-character strings containing letters, digits, `_` or `-`. A filename ID must agree with embedded metadata. Renamed bookmarks use their metadata ID; legacy filename-only bookmarks remain supported by lookup and tagging only when the metadata element is absent. Present but malformed metadata never falls back to the filename. Lookup and catalog changes refuse conflicting, ambiguous, or incomplete inventories (status `2`); capture stops on lookup failure and validates the extractor's resolved ID before writing. Ordinary capture can follow an extractor-resolved redirect and rechecks that ID against the library; bulk import additionally requires the extracted ID to equal the requested ID. Indexing and offline upgrades warn and skip damaged or conflicting pages, including legacy pages lacking the metadata they require. Audit reports conflicts separately from resolved IDs. No identity is automatically repaired.
+Video IDs are case-sensitive 11-character strings containing letters, digits, `_` or `-`. A filename ID must agree with embedded metadata. Renamed bookmarks use their metadata ID. Lookup, tagging, and Collection management support legacy filename-only bookmarks when the metadata element is absent. Present but malformed metadata never falls back to the filename. Lookup and catalog changes refuse conflicting, ambiguous, or incomplete inventories (status `2`); capture stops on lookup failure and validates the extractor's resolved ID before writing. Ordinary capture can follow an extractor-resolved redirect and rechecks that ID against the library; bulk import additionally requires the extracted ID to equal the requested ID. Indexing and offline upgrades warn and skip damaged or conflicting pages, including legacy pages lacking the metadata they require. Audit reports conflicts separately from resolved IDs. No identity is automatically repaired.
 
 Embedded and incoming metadata JSON reject repeated `id` keys even when their values match; other repeated keys retain their existing last-value behavior. Multiple or unterminated metadata elements are invalid. Filename identity is taken from a trailing `[VIDEO_ID].html`; IDs themselves remain case-sensitive.
 

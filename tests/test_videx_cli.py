@@ -12,7 +12,7 @@ import unittest
 import test_bookmark_import as batch
 
 VIDEX = batch.PROJECT / 'videx'
-ROUTES = ('capture', 'import', 'index', 'find', 'tag', 'upgrade')
+ROUTES = ('capture', 'import', 'index', 'find', 'tag', 'collection', 'upgrade')
 
 
 class DispatchTests(unittest.TestCase):

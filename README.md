@@ -31,11 +31,12 @@ Each standalone page contains a thumbnail, description, metadata, and links to t
 - Search the offline index by title, channel, description, video ID, or personal tags; use the compact Filters panel for channels and exact personal tags, with removable active-filter chips. Sort independently by upload date, title, or channel.
 - Prevent duplicate captures by video ID, recognize renamed bookmarks through embedded metadata, and refresh existing bookmarks at their original paths.
 - Manage personal tags in a separate catalog, add tags during capture, and show searchable tag badges on index cards.
+- Manage local groups of existing bookmarks with `./videx collection`. Catalog edits preview first and save with `--apply`. [Collection commands](docs/USAGE.md#collection-management)
 - Audit identities and duplicates without changing files, with optional personal-tag and JSON reports.
 - Upgrade saved bookmark pages offline, using previews and backups, and keep your library outside the source repository.
 - Import a TXT backlog or public YouTube playlist with read-only previews, duplicate checks, per-entry results, and one final index rebuild.
 
-Collections remain future work. See the [current status and roadmap](docs/DEVELOPMENT.md#current-status-and-tracking). The v0.4.0 badge identifies the recorded release snapshot. Current source also includes subsequent tag filtering, import workflows, and the `./videx` command.
+Manual Collection management is available in the current source. Offline browsing and optional playlist creation are planned. The v0.4.0 badge identifies the recorded release snapshot. [Collections milestones](docs/DEVELOPMENT.md#collections-milestones)
 
 Preview a TXT backlog with `./videx import --file backlog.txt` or preview a
 public playlist with `./videx import --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'`.

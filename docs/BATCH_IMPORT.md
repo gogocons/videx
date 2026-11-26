@@ -3,7 +3,7 @@
 [Back to README](../README.md) · [Usage](USAGE.md) · [Development](DEVELOPMENT.md) · [Data formats](DATA_FORMATS.md) · [Safety](SAFETY.md) · [Batch import](BATCH_IMPORT.md)
 
 Import a backlog or public YouTube playlist as individual standalone bookmarks.
-Collections remain [planned functionality](DEVELOPMENT.md#planned-collections). Both input adapters use the
+Optional playlist-to-Collection creation is a [future milestone](DEVELOPMENT.md#collections-milestones). Both input adapters use the
 same capture, metadata curation, and HTML generation pipeline as single-video
 capture, without changing bookmark or catalog formats.
 

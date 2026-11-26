@@ -17,6 +17,8 @@ from test_videx_inventory import snapshot
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
 with patch.object(sys, 'path', [str(SCRIPTS)] + sys.path):
+    import videx_catalog
+
     spec = spec_from_file_location('bookmark_tag', SCRIPTS / 'yt-bookmark-tag.py')
     tagger = module_from_spec(spec)
     spec.loader.exec_module(tagger)
@@ -196,7 +198,7 @@ class CatalogValidationTests(unittest.TestCase):
                 with self.subTest(arguments=arguments, apply=apply), \
                         patch.object(tagger, 'archive_ids') as inventory, \
                         patch.object(tagger, 'write_catalog') as writer, \
-                        patch.object(tagger.tempfile, 'NamedTemporaryFile') as staging:
+                        patch.object(videx_catalog.tempfile, 'NamedTemporaryFile') as staging:
                     status, stdout, stderr = self.invoke(arguments, apply)
                     self.assertEqual(status, 2)
                     self.assertEqual(stdout, '')
@@ -368,7 +370,7 @@ class PruneTests(unittest.TestCase):
             stack.enter_context(patch.object(Path, 'lstat', lambda path: SimpleNamespace(
                 st_mode=stat.S_IFDIR if path == collection else stat.S_IFREG)))
             stack.enter_context(patch.object(Path, 'read_text', read_text))
-            stack.enter_context(patch.object(tagger.os, 'scandir', side_effect=scandir))
+            stack.enter_context(patch.object(os, 'scandir', side_effect=scandir))
             writer = stack.enter_context(patch.object(tagger, 'write_catalog'))
             stack.enter_context(redirect_stdout(output))
             stack.enter_context(redirect_stderr(output))
@@ -429,7 +431,7 @@ class PruneTests(unittest.TestCase):
 
     def test_root_traversal_failure_is_not_an_empty_inventory(self):
         with patch.object(Path, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFDIR)), \
-                patch.object(tagger.os, 'scandir', side_effect=PermissionError('cannot enumerate')):
+                patch.object(os, 'scandir', side_effect=PermissionError('cannot enumerate')):
             with self.assertRaisesRegex(ValueError, 'cannot enumerate'):
                 tagger.archive_ids(ROOT, strict=True)
 
@@ -442,28 +444,39 @@ class PruneTests(unittest.TestCase):
         context.__enter__ = Mock(return_value=iter([entry]))
         context.__exit__ = Mock(return_value=False)
         with patch.object(Path, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFDIR)), \
-                patch.object(tagger.os, 'scandir', return_value=context) as scan:
+                patch.object(os, 'scandir', return_value=context) as scan:
             with self.assertRaisesRegex(ValueError, 'symbolic links'):
                 tagger.archive_ids(ROOT, strict=True)
         scan.assert_called_once_with(ROOT / 'bookmarks')
         entry.stat.assert_called_once_with(follow_symlinks=False)
 
     def test_normal_catalog_write_still_backs_up_before_replace(self):
-        stream = io.StringIO()
-        stream.name = str(ROOT / '.catalog-synthetic.tmp')
-        context = Mock()
-        context.__enter__ = Mock(return_value=stream)
-        context.__exit__ = Mock(return_value=False)
-        operations = Mock()
-        with patch.object(Path, 'mkdir'), patch.object(Path, 'exists', side_effect=[True, False]), \
-                patch.object(tagger.tempfile, 'NamedTemporaryFile', return_value=context), \
-                patch.object(tagger.os, 'fsync'), patch.object(stream, 'fileno', return_value=123), \
-                patch.object(tagger.shutil, 'copy2', operations.backup), \
-                patch.object(tagger.os, 'replace', operations.replace), redirect_stdout(io.StringIO()):
-            tagger.write_catalog(ROOT / 'catalog.json', tagger.empty())
-        self.assertEqual([call[0] for call in operations.mock_calls], ['backup', 'replace'])
-        self.assertEqual(operations.backup.call_args.args[0], ROOT / 'catalog.json')
-        self.assertEqual(operations.replace.call_args.args[1], ROOT / 'catalog.json')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'catalog.json'
+            original = b'{"version":1,"bookmarks":{},"collections":{}}\n'
+            path.write_bytes(original)
+            candidate = {**videx_catalog.empty(), 'extra': 'changed'}
+            replace = os.replace
+            destinations = []
+
+            def observe(source, destination):
+                destinations.append(destination)
+                if destination == path:
+                    backup, = path.parent.glob('catalog.json.bak-*')
+                    self.assertEqual(backup.read_bytes(), original)
+                    self.assertEqual(path.read_bytes(), original)
+                else:
+                    self.assertTrue(source.name.startswith('.catalog-backup-'))
+                replace(source, destination)
+
+            stdout = io.StringIO()
+            with patch.object(os, 'replace', side_effect=observe), redirect_stdout(stdout):
+                publication = tagger.write_catalog(path, candidate)
+            self.assertEqual(destinations, [publication.backup, path])
+            self.assertEqual(publication.path, path)
+            self.assertEqual(json.loads(path.read_bytes()), candidate)
+            self.assertEqual(list(path.parent.glob('.catalog-*.tmp')), [])
+            self.assertEqual(stdout.getvalue(), '')
 
 
 class TagArgumentBoundaryTests(unittest.TestCase):
@@ -673,14 +686,14 @@ class TagReportCompletenessTests(unittest.TestCase):
         self.seed()
         nested = self.collection / 'nested'
         nested.mkdir()
-        real_scan = tagger.os.scandir
+        real_scan = os.scandir
         for denied in (nested, self.collection):
             def scan(path):
                 if Path(path) == denied:
                     raise PermissionError('synthetic enumeration denied')
                 return real_scan(path)
             before = snapshot(self.root)
-            with patch.object(tagger.os, 'scandir', side_effect=scan):
+            with patch.object(os, 'scandir', side_effect=scan):
                 status, stdout, stderr = self.invoke('report')
             self.assertEqual(status, 2 if denied == self.collection else 1)
             self.assertIn('synthetic enumeration denied', stderr)

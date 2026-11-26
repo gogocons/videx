@@ -16,9 +16,10 @@ Run `./videx --help` to see the available commands. From another working directo
 | `./videx index` | Build the offline search index. |
 | `./videx find` | Look up a video or audit the library. |
 | `./videx tag` | Report or edit personal tags. |
+| `./videx collection` | Inspect or edit local Collections. |
 | `./videx upgrade` | Preview or apply offline bookmark upgrades. |
 
-Use `./videx COMMAND --help` for the command's own options. The six existing workflows retain their original library arguments, write flags, output, and exit statuses. You can still use the direct script invocations shown throughout this guide.
+Use `./videx COMMAND --help` for the command's own options. You can still use the direct script invocations shown throughout this guide.
 
 ## Library configuration
 
@@ -132,7 +133,7 @@ python3 -B scripts/yt-bookmark-generate.py /path/to/info.json /path/to/thumbnail
 python3 -B scripts/yt-bookmark-index.py '/path/to/library'
 ```
 
-For a disposable demonstration library, supply synthetic metadata such as `{"id":"AAAAAAAAAAA","title":"Example","uploader":"Synthetic"}` and a synthetic thumbnail. Replace the example paths with those fixtures and a separate temporary library. The generator creates parent directories and writes HTML immediately; it has no preview/`--apply` mode. A matching existing regular bookmark can be replaced without an upgrade backup. It does not add personal tags or rebuild the index. Here and in older CLI messages, “collection index” means the library index, not the planned Collections feature.
+For a disposable demonstration library, supply synthetic metadata such as `{"id":"AAAAAAAAAAA","title":"Example","uploader":"Synthetic"}` and a synthetic thumbnail. Replace the example paths with those fixtures and a separate temporary library. The generator creates parent directories and writes HTML immediately; it has no preview/`--apply` mode. A matching existing regular bookmark can be replaced without an upgrade backup. It does not add personal tags or rebuild the index. Here and in older CLI messages, “collection index” refers to the library-wide index.
 
 ## Rebuild and browse the offline index
 
@@ -221,6 +222,29 @@ python3 -B scripts/yt-bookmark-tag.py --apply -- '/path/to/library' add -AAAAAAA
 Use the same ordering for `remove`, `set`, `list`, and option-like `rename` values. Do not append the write flag after `--`, where it is data. Keeping options before all positional arguments also avoids Python-version differences when argparse handles options mixed with a variable-length positional list. The existing configured-library shorthand remains supported for ordinary arguments; the examples above use an explicit library so no shorthand parsing change is needed.
 
 `python3 -B scripts/yt-bookmark-tag.py prune` previews catalog entries without matching bookmarks; add `--apply` to remove them, backing up the catalog first. Both modes refuse with status `2` if the `bookmarks/` inventory is incomplete: unreadable files or directories, malformed metadata, unidentified bookmarks, or symbolic links. Generated `index.html` files are excluded. Resolve the reported paths before retrying; refusal leaves the catalog and backups untouched.
+
+## Collection management
+
+Collections group existing bookmarks by video ID, independently of personal tags. Use the configured library or put `--library DIR` after the operation to select an existing root containing a real `bookmarks/` directory. An empty bookmark directory is valid. Explicit selection bypasses local configuration.
+
+```bash
+./videx collection list
+./videx collection show 'Field Notes'
+./videx collection create --description 'Videos to revisit.' 'Field Notes'
+./videx collection create --apply --description 'Videos to revisit.' 'Field Notes'
+./videx collection add --apply 'Field Notes' AAAAAAAAAAA BBBBBBBBBBB
+./videx collection rename --apply 'Field Notes' 'Field Research'
+./videx collection describe --apply 'Field Research' 'A new description'
+./videx collection describe --apply 'Field Research' ''
+./videx collection remove --apply 'Field Research' AAAAAAAAAAA
+./videx collection delete 'Field Research'
+```
+
+Only list and show are read-only operations. Every mutation previews until you supply `--apply`. List shows stored member counts, and show lists each member's availability and observed paths, including hidden bookmarks. An absent bookmark leaves its reference in the Collection. Restore the same video ID to make it available again, or remove that ID explicitly. Add and remove accept multiple IDs and refuse the whole change on invalid input. Deleting a Collection leaves member bookmarks, tags, and other Collections intact.
+
+Targets accept a case-insensitive normalized name, `id:UUID`, or `name:TEXT` for explicit name selection. Place options before `--` to pass literal option-like inputs, for example `./videx collection add --apply -- 'Field Notes' -AAAAAAAAAA`. All operations accept `--json`. Use `./videx collection --help` or `./videx collection OPERATION --help` for usage. See [catalog reports](DATA_FORMATS.md#collection-json-report-version-1) and [Collection safety](SAFETY.md#collection-mutations-and-inspection) for the output and exit-status contracts.
+
+Collection edits never rebuild the index automatically. Collection browsing is planned for [Milestone 2](DEVELOPMENT.md#collections-milestones), where a successful rebuild will be required to see catalog changes in the saved index.
 
 ## Lookup and library integrity audit
 

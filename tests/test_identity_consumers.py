@@ -102,7 +102,7 @@ class ConsumerTests(unittest.TestCase):
                           ('rename', 'old', 'new'), ('prune',)):
             with self.subTest(operation=operation):
                 self.assertEqual(self.invoke(tagger, self.root, *operation, '--apply')[0], 2)
-                with patch.object(tagger.os, 'scandir', side_effect=PermissionError('synthetic traversal denied')):
+                with patch.object(os, 'scandir', side_effect=PermissionError('synthetic traversal denied')):
                     status, _, stderr = self.invoke(tagger, self.root, *operation, '--apply')
                     self.assertEqual(status, 2)
                     self.assertIn('synthetic traversal denied', stderr)
@@ -788,6 +788,13 @@ if os.environ.get('VIDEX_FIXTURE_BAD_CATALOG'):
         self.assertEqual(catalog['bookmarks'][A]['tags'], ['Multi Word', 'personal', 'é' * 80])
 
     def test_new_capture_tag_order_is_independent_of_insertion_order(self):
+        catalog_path = self.library / 'catalog.json'
+        collections = {'5bfa4a67-8796-45f6-96c3-b5deec914d16': {
+            'name': 'Saved', 'members': [A], 'extra': {'keep': True},
+        }}
+        catalog_path.write_text(json.dumps({
+            'version': 1, 'bookmarks': {}, 'collections': collections,
+        }), encoding='utf-8')
         for identity, values in ((A, ['Zulu', 'Beta', 'alpha', 'HIDDEN', 'beta']),
                                  (C, ['alpha', 'Beta', 'beta', 'HIDDEN', 'Zulu'])):
             with self.subTest(identity=identity):
@@ -795,9 +802,10 @@ if os.environ.get('VIDEX_FIXTURE_BAD_CATALOG'):
                 arguments = [argument for value in values for argument in ('--tag', value)]
                 result = self.capture('https://youtu.be/' + identity, *arguments, with_tags=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                catalog = json.loads((self.library / 'catalog.json').read_text())
+                catalog = json.loads(catalog_path.read_text())
                 self.assertEqual(catalog['bookmarks'][identity]['tags'],
                                  ['alpha', 'Beta', 'hidden', 'Zulu'])
+                self.assertEqual(catalog['collections'], collections)
 
     def test_existing_capture_sorts_only_applied_tag_changes(self):
         path = self.collection / 'renamed.html'

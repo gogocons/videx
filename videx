@@ -4,13 +4,14 @@ usage() {
   cat <<'EOF'
 Usage: ./videx COMMAND [ARGUMENTS ...]
 
-  open     Open the existing library index
-  capture  Save or refresh a video bookmark
-  import   Preview or apply a TXT or public playlist import
-  index    Rebuild the offline library index
-  find     Look up a video or audit the library
-  tag      Inspect or edit personal tags
-  upgrade  Preview or apply offline bookmark upgrades
+  open        Open the existing library index
+  capture     Save or refresh a video bookmark
+  import      Preview or apply a TXT or public playlist import
+  index       Rebuild the offline library index
+  find        Look up a video or audit the library
+  tag         Inspect or edit personal tags
+  collection  Inspect or edit local Collections
+  upgrade     Preview or apply offline bookmark upgrades
 
 Run ./videx COMMAND --help for command options.
 EOF
@@ -25,7 +26,7 @@ if (( $# == 0 )); then
 fi
 
 case $1 in
-  capture|open|import|index|find|tag|upgrade) ;;
+  capture|open|import|index|find|tag|collection|upgrade) ;;
   *) printf 'videx: unknown command: %s\n' "$1" >&2; exit 2 ;;
 esac
 

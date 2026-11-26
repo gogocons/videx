@@ -2,48 +2,13 @@
 """Manage Videx personal tags in a library-level catalog.json (offline)."""
 import argparse
 from collections import Counter, defaultdict
-from datetime import datetime
-import json
-import os
 from pathlib import Path
-import shutil
 import stat
 import sys
-import tempfile
+from videx_catalog import CatalogWriteError, load, write_catalog
 from videx_config import default_library
 from videx_identity import VIDEO_ID as ID, IdentityError, bookmark_identity
 from videx_inventory import scan_bookmarks
-
-
-def empty():
-    return {'version': 1, 'bookmarks': {}, 'collections': {}}
-
-
-def load(path):
-    try:
-        mode = path.lstat().st_mode
-    except FileNotFoundError:
-        return empty()
-    if not stat.S_ISREG(mode):
-        raise ValueError(f'{path}: catalog must be a regular file, not a symlink or special file')
-
-    def catalog_object(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f'{path}: Duplicate catalog object member {key!r}')
-            result[key] = value
-        return result
-
-    obj = json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=catalog_object)
-    if not isinstance(obj, dict) or obj.get('version') != 1 or not isinstance(obj.get('bookmarks'), dict) or not isinstance(obj.get('collections'), dict):
-        raise ValueError('Unsupported or invalid catalog schema; refusing to modify')
-    for video_id, record in obj['bookmarks'].items():
-        if not ID.fullmatch(video_id) or not isinstance(record, dict) or not isinstance(record.get('tags', []), list):
-            raise ValueError(f'Invalid catalog entry: {video_id}')
-        if any(not isinstance(value, str) for value in record.get('tags', [])):
-            raise ValueError(f'{path}: tags for {video_id} must contain only strings')
-    return obj
 
 
 def normalized(tag):
@@ -92,21 +57,10 @@ def archive_ids(root, strict=False):
     return ids
 
 
-def write_catalog(path, obj):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = None
-    try:
-        with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=path.parent, prefix='.catalog-', suffix='.tmp', delete=False) as stream:
-            tmp = Path(stream.name)
-            json.dump(obj, stream, ensure_ascii=False, indent=2)
-            stream.write('\n'); stream.flush(); os.fsync(stream.fileno())
-        if path.exists():
-            backup = path.with_name(f'catalog.json.bak-{datetime.now().strftime("%Y%m%d-%H%M%S-%f")}')
-            shutil.copy2(path, backup)
-            print(f'BACKUP: {backup}')
-        os.replace(tmp, path)
-    finally:
-        if tmp and tmp.exists(): tmp.unlink()
+def save_catalog(path, obj):
+    publication = write_catalog(path, obj)
+    if publication.backup is not None:
+        print(f'BACKUP: {publication.backup}')
 
 
 def report(obj, ids, issues=()):
@@ -196,7 +150,7 @@ def main():
             if args.apply:
                 for vid in orphans:
                     del catalog['bookmarks'][vid]
-                write_catalog(path, catalog)
+                save_catalog(path, catalog)
                 print(f'UPDATED: {path}')
             else:
                 print('No files modified. Repeat with --apply to save.')
@@ -233,12 +187,14 @@ def main():
             print(f'  {vid}: {before} -> {after}')
         if not changes: print('No changes needed.'); return 0
         if args.apply:
-            write_catalog(path, catalog)
+            save_catalog(path, catalog)
             print(f'UPDATED: {path}')
             print('Rebuild index separately if needed.')
         else: print('No files modified. Repeat with --apply to save.')
         return 0
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, CatalogWriteError) and exc.backup is not None:
+            print(f'BACKUP: {exc.backup}')
         print(f'ERROR: {exc}', file=sys.stderr); return 2
 
 if __name__ == '__main__': sys.exit(main())
