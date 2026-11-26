@@ -6,7 +6,7 @@
 
 This document is the authoritative development status, roadmap, and outstanding-work register. Keep it current when capabilities or decisions change; GitHub Issues may supplement it, but are not required to understand or continue development. Usage contracts belong in [Usage](USAGE.md), [Batch import](BATCH_IMPORT.md), [Safety](SAFETY.md), and [Data formats](DATA_FORMATS.md), rather than separate overlapping roadmaps.
 
-The latest recorded release snapshot is **v0.4.0**. The current source also implements exact personal-tag filtering, TXT and public YouTube playlist importing, the unified `videx` command with local index opening, manual Collection management, and offline Collection browsing. Optional playlist-to-Collection creation is planned.
+The latest recorded release snapshot is **v0.4.0**. The current source also implements exact personal-tag filtering, TXT and public YouTube playlist importing, the unified `videx` command with local index opening, manual Collection management, offline Collection browsing, and optional report-based Collection creation.
 
 | Completed milestone | Current capability and evidence |
 |---|---|
@@ -19,6 +19,7 @@ The latest recorded release snapshot is **v0.4.0**. The current source also impl
 | Unified command and offline index opening (after release snapshot) | `./videx open` opens the saved index through the desktop's HTML association. Six existing workflows are available through direct delegation. Coverage in `tests/test_bookmark_open.py`, `tests/test_videx_cli.py`, and the importer interruption tests. |
 | Collections Milestone 1 (after release snapshot) | `./videx collection` manages local Collection records with preview/apply and shared catalog backups. Coverage in `tests/test_bookmark_collection.py` and the tag, capture, and dispatcher regressions. |
 | Collections Milestone 2 (after release snapshot) | The generated index browses Collections with the shared grid, search, filters, and sort controls. Snapshot projection and generated JavaScript are covered in `tests/test_bookmark_index.py`. |
+| Collections Milestone 3 (after release snapshot) | Playlist reports can provide an offline, library-bound proposal for separate Collection creation. Coverage in `tests/test_playlist_collection.py` includes the explicit index rebuild and hidden payload exclusion. |
 
 These milestones describe implementation and offline regression coverage, not live YouTube or cross-platform certification. See [recorded validation](#testing-and-recorded-runtime-validation) and [known limitations](#known-issues-and-limitations).
 
@@ -49,6 +50,7 @@ videx/
 │   ├── videx_catalog.py         # Shared catalog loading, validation, and publication
 │   ├── videx_config.py          # Configured/default library resolution
 │   ├── videx_identity.py        # Shared identity and metadata JSON validation
+│   ├── videx_import_report.py   # Playlist proposal validation and library binding
 │   └── videx_inventory.py       # Shared bookmark enumeration and checked reading
 ├── tests/                       # Offline regressions with synthetic fixtures
 ├── config.example.json          # Sample library path (tracked)
@@ -68,6 +70,7 @@ videx/
 - `videx_catalog.py` loads and atomically publishes schema-1 catalogs. Collection record validation is opt-in.
 - `videx_config.py` resolves the configured/default library; its direct script entry point prints that path.
 - `videx_identity.py` centralizes ID validation, metadata JSON parsing, and identity resolution.
+- `videx_import_report.py` defines the report handoff checks and shares the local directory identity rules between import and Collection creation.
 - `videx_inventory.py` enumerates bookmark candidates and checks file types before reading.
 
 See [usage](USAGE.md), [data formats](DATA_FORMATS.md), and [safety](SAFETY.md) for the workflows and their shared contracts.
@@ -116,6 +119,16 @@ All user-facing script and documentation-tool `--help` commands returned `0`. An
 On macOS 26.7.3 (Apple Silicon), CPython 3.15.2 ran the full offline suite with Deno 2.9.8 available for JavaScript checks. Of 286 tests, 285 passed and one was skipped because the sandbox refused to bind the existing Unix socket fixture. There were zero failures and zero errors. Apple Bash 3.2.57 passed syntax and dispatch checks.
 
 The opener tests used temporary libraries and harmless launch stubs, including mocked macOS and Linux launcher selection. Dispatch tests checked argument and stream forwarding, representative offline workflows, and importer interruption with process-group cleanup. Real desktop launching and native Linux validation remain outstanding.
+
+### Collections Milestone 3 validation
+
+On macOS Apple Silicon with CPython 3.15.2, the complete offline suite ran 320
+tests. 319 passed, and the sandbox denied the Unix-socket fixture. The synthetic
+integration test captured from a stub playlist, reviewed and applied the report
+with extraction unavailable, and verified one catalog publication and an
+explicit rebuild with hidden bookmarks excluded from the generated payload.
+Final real-world library acceptance and the manual desktop and hidden-bookmark
+checks for this workflow remain pending.
 
 ## Development guidance
 
@@ -179,13 +192,13 @@ The following objectives have no assigned release or delivery date. Proposed pri
 
 1. **Qualify Linux and supported runtimes.** Run the offline suite and representative synthetic capture, lookup, tag, and index workflows on a real Linux environment. Record distribution, Python/Bash versions, optional dependencies, failures and skips. The historical macOS results do not establish a minimum supported Python version. Track reproducible portability defects separately; a broad CI matrix or new dependencies are not assumed.
 2. **Decide the upgrade partial-result contract.** Current mixed valid/skipped runs can return `0`; no candidates with skipped pages returns `1`. [Safety](SAFETY.md#offline-upgrades) records the exact behavior. Decide whether to retain it for compatibility or change it before calling it a defect. Any later change needs caller/compatibility review, all-valid, mixed, all-skipped and operational-error tests in preview and apply modes, and migration guidance. Preserve backups and preview defaults.
-3. **Deliver Collections in stages.** Manual catalog operations and offline index browsing are implemented. Optional playlist-to-Collection creation remains planned. No release is assigned.
+3. **Complete final Collections acceptance.** Milestones 1 and 2 passed user acceptance, including desktop browsing in Safari and Firefox. Milestone 3 is implemented. Real-world library acceptance and manual hidden-bookmark verification remain pending.
 
 ### Collections milestones
 
 **Milestone 1 — Catalog and manual management (implemented).** Collections are local groups independent of personal tags, channel directories, source playlists, and bookmark HTML. Catalog schema 1 stores stable UUIDv4 records with normalized unique names, optional descriptions, and video-ID membership. A bookmark can belong to several Collections. See the CLI and storage contracts in [Usage](USAGE.md#collection-management), [Data formats](DATA_FORMATS.md#collection-records), and [Safety](SAFETY.md#collection-mutations-and-inspection).
 
-**Ordering decision.** Custom ordering is deferred. The member array preserves first-occurrence append order and the relative order of surviving members. Future playlist proposals preserve source sequence internally. Array order is a storage property. The initial milestones include no manual reorder command, positioning, drag-and-drop, or Collection-specific sort mode.
+**Ordering decision.** Custom ordering is deferred. The member array preserves first-occurrence append order and the relative order of surviving members. Playlist proposals preserve source sequence internally. Array order is a storage property. The initial milestones include no manual reorder command, positioning, drag-and-drop, or Collection-specific sort mode.
 
 **Milestone 2 — Offline index browsing (implemented).** The Collection selector is the first control in the Filters panel when the snapshot includes Collections. The panel starts closed and the browsing context starts at All Bookmarks. The existing card grid shows visible members. The selected Collection's name, optional description, and visible member count stay visible when the panel closes. Membership intersects with Search, Channel, and Personal Tag. Clear Filters preserves the selected Collection. Library-wide statistics, filter options, and Single Entries grouping continue to use the whole visible library. See [Browse Collections](USAGE.md#browse-collections).
 
@@ -193,9 +206,11 @@ The index reads the catalog once and projects membership onto visible, successfu
 
 All Bookmarks and Collections share **Newest**, **Oldest**, **Title A-Z**, **Title Z-A**, and **Channel A-Z** and retain the active sort when browsing context changes. Newest remains the default. The shorter Newest and Oldest labels still sort by upload date. Internal sort identifiers, algorithms, and tie-breaking behavior are unchanged.
 
-**Milestone 3 — Optional playlist-to-Collection creation (planned).** Use a completed import report to propose a Collection name, description, and confirmed local members in playlist sequence. Import preview may show candidates and distinguish existing bookmarks from those awaiting capture. Reuse existing bookmarks and successfully captured bookmarks. Users can accept, edit, or skip the proposal and apply it separately after the final outcomes are known. Support offline review and apply. Identify omitted or unavailable entries and require explicit acceptance of any reduced membership after a completed import with per-entry failures. If no member is eligible, skip the proposal and leave empty creation to the manual command. A refused or interrupted discovery supplies no eligible proposal. A capture interruption preserves completed bookmarks, and Collection apply requires a completed import report.
+**Milestone 3 — Optional playlist-to-Collection creation (implemented).** Use `import --playlist URL --propose-collection` to add an opt-in extension to the version 1 import report. Import preview shows candidates and distinguishes existing bookmarks from those awaiting capture. A completed applied import can propose the playlist title, description, and confirmed local members in first-occurrence playlist sequence. Use `collection from-import REPORT` to review a saved JSON report offline (`-` reads stdin). Repeat with `--apply` after approval. `--name` and `--description` override the defaults, and an empty description clears it. Decline simply by leaving the proposal unapplied. Completed imports with per-entry omissions require `--accept-partial` on apply. Empty membership, interrupted or refused discovery, and interrupted or stopped acquisition provide no applicable proposal. Index failures are reported separately from acquisition.
 
-Require a different name or skip on conflicts, including repeated imports. Revalidate the proposed membership against the current inventory and publish a new Collection with all members in one catalog write. Keep source playlist state outside the Collection. Preserve ordinary TXT and playlist import and index rebuild behavior. Users can suppress the import rebuild with `--no-re-index` and rebuild after applying the Collection. Capture success survives later catalog failure. Proposal format and CLI syntax remain Milestone 3 decisions. GUI management and automatic playlist synchronization are outside these milestones.
+Bind eligible reports to the canonical library path and the device/inode identity of both the library root and its `bookmarks/` directory. Revalidate the entire proposed membership against strict live inventory during preview and apply. A name conflict requires another name or skipping, including on repeated apply. Publish a new Collection with all members in one existing catalog mutation. Capture success survives later catalog failure. Keep playlist state in the report and preserve ordinary import and indexing defaults. Use `--no-re-index` during integrated import and explicitly rebuild once after approval and Collection creation. GUI management and automatic playlist synchronization are outside these milestones.
+
+Workflow and report details are in [Batch import](BATCH_IMPORT.md#playlist-to-collection) and [Data formats](DATA_FORMATS.md#playlist-collection-report-extension). Final real-world acceptance, including the Milestone 3 desktop workflow and manual hidden-bookmark verification, remains pending.
 
 ### Deferred enhancements and investigation
 
@@ -230,8 +245,8 @@ The nine-item backlog prepared against v0.3.0 has been checked against current s
 | Define upgrade skipped-file statuses | Current behavior is documented; a decision on changing the contract remains open. |
 | Exclude `hidden` from index | Completed: all bookmark-specific index data, choices, grouping and counts exclude hidden IDs; all-hidden valid libraries publish an empty index. Files/catalog/CLI reports remain unchanged. Index regressions cover these distinctions. |
 | Add personal-tag filtering | Completed: free-text search includes tags; exact single-tag filtering combines with channel/search using AND. Earlier open search-scope questions are resolved by current implementation. |
-| Add Collections in stages | Manual management and offline index browsing are implemented. Optional playlist-to-Collection creation is planned. |
-| Add playlist ingestion | Completed via the public-playlist importer. Continuation, overall statuses and retry/interruption behavior are documented in [Batch import](BATCH_IMPORT.md#reports-and-recovery); single capture still uses `--no-playlist`. Playlist-to-Collection work remains planned. |
+| Add Collections in stages | Manual management, offline index browsing, and optional playlist-derived creation are implemented. Final user acceptance is pending. |
+| Add playlist ingestion | Completed via the public-playlist importer. Continuation, statuses, and recovery are documented in [Batch import](BATCH_IMPORT.md#reports-and-recovery). Single capture still uses `--no-playlist`. |
 | Investigate catalog concurrency | Retained as a deferred investigation, with no new locking or transaction requirement approved. |
 
 Earlier completed work (external configuration, personal tagging, reports, badges, identity validation, guarded pruning, escaping, capture preflight and atomic index publication) remains covered by the milestone table and historical release notes. GitHub filing procedures and unverified issue metadata are not development requirements. No issue inventory or external tracker is needed to interpret this register.

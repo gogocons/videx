@@ -257,6 +257,24 @@ Targets accept a case-insensitive normalized name, `id:UUID`, or `name:TEXT` for
 
 Collection edits never rebuild the index automatically. Run `./videx index '/path/to/library'` for an explicitly selected library, then reload or reopen the saved index to see the changes. See [Browse Collections](#browse-collections).
 
+### Create from a playlist import report
+
+```text
+./videx collection from-import REPORT [--library DIR] [--name NAME] [--description TEXT] [--json] [--apply [--accept-partial]]
+```
+
+Use a saved JSON report from `import --playlist URL --propose-collection --apply --json`.
+Use `-` as the report argument to read from stdin. Preview and apply work offline
+against the library used for import. A preview shows the effective metadata,
+ordered local members, omitted entries and duplicate positions. Missing or
+invalid titles require `--name`. Invalid descriptions require a replacement or
+`--description=''` to clear the field. Repeat the reviewed overrides on apply.
+Choose an unused name if the proposed one is already taken.
+
+Leave the preview unapplied to decline. For partial membership, review the
+omissions and supply `--accept-partial` alongside `--apply`. Capture and Collection
+creation have separate approval and failure handling. [Complete playlist workflow](BATCH_IMPORT.md#playlist-to-collection)
+
 ## Lookup and library integrity audit
 
 Direct lookup accepts either a video ID or a locally recognized URL:

@@ -91,6 +91,35 @@ The generated index contains a read-only projection of each Collection's ID, nam
 
 `list` returns summaries in `collections`, each with `id`, `name`, and `member_count`. `show` returns the selected `collection` with its stored members, plus ordered `member_findings` with `id`, `status`, and absolute `paths`. Mutations carry `before` and `after` with the ID and documented record fields, using null for a missing side or for a proposed UUID in a creation preview. They also report `catalog.path`, `catalog.backup`, and `catalog.publication` (the latter is `not_published`, `published`, or `unknown`). The status field describes the catalog read at preflight. Argument syntax errors use argparse diagnostics.
 
+`from-import` adds `proposal` after decoding a valid handoff. It includes the
+source `title` and `description`, a normalized `candidate` with ordered
+`members` and available valid metadata, `metadata_issues` keyed by field,
+`omitted` entries with position, ID, outcome and reason, `repeats` with position,
+ID and `duplicate_of`, handoff `status`, and a `partial` boolean for omissions.
+An invalid draft can be inspected here even when the mutation reports `refused`.
+
+### Playlist Collection report extension
+
+The [import report version 1](BATCH_IMPORT.md#reports-and-recovery) adds
+`collection_proposal` only with `--propose-collection` on a playlist import.
+
+| Field | Values |
+|---|---|
+| `acquisition` | `preview` for completed discovery without capture, `completed` for an applied batch that ran to completion, and `stopped` for discovery/acquisition refusal, interruption, or batch-wide stop |
+| `status` | `preview`, `eligible`, `empty`, or `refused`. An import that completed but could no longer confirm its original library or members reports `completed` and `refused`. |
+| `reason` | Text for `empty` and `refused`, otherwise null |
+| `library_identity` | For `eligible`, an object with `root` and `bookmarks` objects, each containing integer `device` and `inode` fields. Otherwise null. The existing top-level `library` supplies the canonical path. |
+
+Membership comes from the ordered `created` and `skipped_existing` entries, with
+subsequent occurrences reported as `duplicate_input`. Failed, invalid, and
+unavailable entries are omissions. The consumer checks JSON syntax and unique
+keys, report version, source and field types, ordered positions, canonical IDs,
+duplicate references, counts, outcome consistency and the library binding.
+Only applied, completed, eligible reports can supply Collection membership. The
+index result remains separate. Reports are local handoff artifacts with a library
+binding. Collection records retain the existing schema and contain no source
+playlist or report identity.
+
 ## Personal tag normalization
 
 Whitespace is collapsed and duplicates are compared case-insensitively. Normalized tags must be nonempty, at most 80 characters, and free of control characters. Display capitalization is retained except that the reserved tag `hidden` normalizes to lowercase.

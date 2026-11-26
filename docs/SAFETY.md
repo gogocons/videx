@@ -33,10 +33,9 @@ if needed. Exit statuses are `0` complete, `1` partial, `2` global refusal, and
 Playlist discovery is a prerequisite for any capture: nonzero extraction status,
 diagnostics, invalid JSON/structure, count or position inconsistencies, and explicit
 incomplete/error markers refuse the whole discovery without library changes.
-This deliberately includes benign discovery warnings; there is no partial-list
-apply override. Playlist metadata stays in reports and is not saved to catalogs.
-No authentication, account mutation, playlist synchronization/deletion, or Collection
-creation is performed. See [discovery completeness limits](BATCH_IMPORT.md#public-playlist-discovery-and-completeness).
+This deliberately includes benign discovery warnings. Playlist metadata stays in
+import reports. An optional report can supply the initial metadata for separate
+local Collection creation. [Discovery completeness limits](BATCH_IMPORT.md#public-playlist-discovery-and-completeness)
 
 ## Filesystem inspection
 
@@ -79,6 +78,29 @@ For a changed catalog, the shared writer stages JSON in a unique sibling `.catal
 Every mutation previews by default and uses the same catalog and strict inventory preflight as apply, including metadata-only changes and no-ops. The apply invocation validates the complete candidate catalog and publishes it once, with explicit `--apply`. A batch of member changes is all-or-nothing. Preview, queries, and no-ops leave catalog, backups, bookmark HTML, and index untouched. A successful edit changes only the catalog and applicable backup. Deleting a Collection removes only its record. Removing a member leaves the bookmark and its tags intact. Tag pruning remains scoped to bookmark catalog records. A stale member can be removed explicitly or resolve again when its ID returns.
 
 List reads only the catalog after checking the library layout. Show distinguishes confirmed absent IDs from unverified members on an incomplete scan. Ambiguous identities have multiple observed paths. Existing hidden bookmarks remain visible to CLI inspection. Read-only operations and valid previews, applies, and no-ops return `0`; confirmed stale members alone do not make inspection fail. A missing show target or usable partial/duplicate inventory report returns `1`. Syntax, library, catalog, mutation validation, and publication failures return `2`. A handled interruption returns `130`; if it occurs at replacement the report can indicate uncertainty, and the saved catalog can be reread to verify the outcome.
+
+### Playlist-derived Collections
+
+The importer's `--apply` authorizes acquisition. Collection creation requires
+its own `--apply` and, for eligible reports with omissions, `--accept-partial`.
+Refused or interrupted discovery, interrupted capture, or a batch-wide stop
+cannot supply an applicable proposal. An index error after completed acquisition
+is independent of the proposal.
+
+An eligible report binds to the canonical path and filesystem device/inode
+identities of the library root and its real `bookmarks/` directory. Aliases
+resolving to the same library work. A binding mismatch requires a fresh report.
+Treat pending reports as library-bound handoff artifacts. Keep library backups
+separately.
+
+Preview and apply validate the complete catalog and strict live inventory.
+Renamed bookmarks resolve by canonical ID, and the command refuses all changes
+if a proposed member is missing or the inventory is incomplete or ambiguous.
+Restoring a previously omitted bookmark leaves the reviewed member list fixed.
+An existing name requires an alternative or skipping creation. The Collection
+and its member list publish together using the shared backup and replacement
+contract. A catalog failure leaves captured bookmarks available. Coordinate
+writers and rebuild the index separately if needed. [Workflow and recovery](BATCH_IMPORT.md#playlist-to-collection)
 
 ## Index publication and statuses
 

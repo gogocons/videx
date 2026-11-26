@@ -16,6 +16,7 @@ from videx_catalog import (
 )
 from videx_config import default_library
 from videx_identity import valid_id
+from videx_import_report import OMISSION_OUTCOMES, library_identity, member_ids, read_report
 
 
 spec = spec_from_file_location('bookmark_tags', Path(__file__).with_name('yt-bookmark-tag.py'))
@@ -23,6 +24,7 @@ tagger = module_from_spec(spec)
 spec.loader.exec_module(tagger)
 
 READ_OPERATIONS = {'list', 'show'}
+CREATION_OPERATIONS = {'create', 'from-import'}
 
 
 class Refusal(ValueError):
@@ -40,6 +42,7 @@ def parse_args(argv):
         'list': 'List Collections and stored member counts',
         'show': 'Inspect a Collection and its member availability',
         'create': 'Create an empty Collection',
+        'from-import': 'Create a Collection from a completed playlist import report',
         'rename': 'Change a Collection name',
         'describe': 'Set a description or clear it with empty text',
         'add': 'Append existing bookmarks by video ID',
@@ -54,18 +57,26 @@ def parse_args(argv):
         command.add_argument('--json', action='store_true', help='Print one JSON report')
         if operation not in READ_OPERATIONS:
             command.add_argument('--apply', action='store_true', help='Save changes (default: preview)')
-        if operation not in {'list', 'create'}:
+        if operation not in {'list', *CREATION_OPERATIONS}:
             command.add_argument('target', metavar='TARGET', help='Collection name, id:UUID, or name:TEXT')
         if operation == 'create':
             command.add_argument('name', metavar='NAME')
             command.add_argument('--description', metavar='TEXT', default='', help='Optional description')
+        if operation == 'from-import':
+            command.add_argument('report', metavar='REPORT', help='JSON import report file, or - for stdin')
+            command.add_argument('--name', metavar='NAME', help='Override the proposed name')
+            command.add_argument('--description', metavar='TEXT', help='Override description; empty text clears it')
+            command.add_argument('--accept-partial', action='store_true', help='Approve the listed omissions on apply')
         if operation == 'rename':
             command.add_argument('name', metavar='NEW_NAME')
         if operation == 'describe':
             command.add_argument('description', metavar='TEXT')
         if operation in {'add', 'remove'}:
             command.add_argument('members', metavar='VIDEO_ID', nargs='+')
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.operation == 'from-import' and args.accept_partial and not args.apply:
+        parser.error('--accept-partial requires --apply')
+    return args
 
 
 def target_id(target, names, collections):
@@ -114,18 +125,44 @@ def show(library, view, report):
         report.update(result='ok', exit_status=0)
 
 
+def ensure_unique_name(name, names, identity=None):
+    owner = names.get(collection_name_key(name))
+    if owner is not None and owner != identity:
+        raise ValueError(f'A Collection already uses the name {name!r}')
+
+
+def require_members(members, ids):
+    missing = [video_id for video_id in members if video_id not in ids]
+    if missing:
+        raise ValueError('Video IDs not present in library: ' + ', '.join(missing))
+
+
+def new_record(name, description, members):
+    record = {'members': members}
+    problems = {}
+    try:
+        record['name'] = collection_name(name)
+    except ValueError as exc:
+        problems['name'] = str(exc)
+    try:
+        normalized = collection_description(description)
+        if normalized is not None:
+            record['description'] = normalized
+    except ValueError as exc:
+        problems['description'] = str(exc)
+    return record, problems
+
+
 def edited_record(args, identity, before, names, ids):
     operation = args.operation
     if operation == 'delete':
         return None
-    after = before.copy() if before is not None else {'members': []}
-    if operation in {'create', 'rename'}:
+    after = before.copy()
+    if operation == 'rename':
         name = collection_name(args.name)
-        owner = names.get(collection_name_key(name))
-        if owner is not None and owner != identity:
-            raise ValueError(f'A Collection already uses the name {name!r}')
+        ensure_unique_name(name, names, identity)
         after['name'] = name
-    if operation in {'create', 'describe'}:
+    if operation == 'describe':
         description = collection_description(args.description)
         if description is None:
             after.pop('description', None)
@@ -137,16 +174,52 @@ def edited_record(args, identity, before, names, ids):
         if invalid:
             raise ValueError('Invalid 11-character video IDs: ' + ', '.join(map(repr, invalid)))
         if operation == 'add':
-            missing = [video_id for video_id in requested if video_id not in ids]
-            if missing:
-                raise ValueError('Video IDs not present in library: ' + ', '.join(missing))
+            require_members(requested, ids)
             after['members'] = list(dict.fromkeys(before['members'] + list(requested)))
         else:
             after['members'] = [video_id for video_id in before['members'] if video_id not in requested]
     return after
 
 
-def mutate(args, library, path, catalog, names, identity, report):
+def import_candidate(args, library, report):
+    try:
+        imported = read_report(args.report, sys.stdin)
+    except (OSError, ValueError) as exc:
+        raise Refusal('IMPORT_REPORT_ERROR', str(exc)) from exc
+    proposal = imported['collection_proposal']
+    source = imported['source']
+    title, description = source.get('title'), source.get('description')
+    members = member_ids(imported['entries'])
+    omitted = []
+    repeats = []
+    for entry in imported['entries']:
+        outcome = entry['outcome']
+        finding = dict(position=entry['position'], id=entry['id'])
+        if outcome == 'duplicate_input':
+            repeats.append(dict(finding, duplicate_of=entry['duplicate_of']))
+        elif outcome in OMISSION_OUTCOMES or outcome == 'not_processed':
+            omitted.append(dict(finding, outcome=outcome, reason=entry.get('message')))
+    name_input = title if args.name is None else args.name
+    description_input = (description or '') if args.description is None else args.description
+    candidate, problems = new_record(name_input, description_input, members)
+    if name_input is None:
+        problems['name'] = 'Playlist title is missing'
+    report['proposal'] = dict(status=proposal['status'], title=title, description=description,
+                              candidate=candidate, metadata_issues=problems, omitted=omitted,
+                              repeats=repeats, partial=bool(omitted))
+    if proposal['status'] != 'eligible':
+        reason = proposal['reason'] or 'Import preview cannot authorize Collection creation'
+        raise Refusal('PROPOSAL_INELIGIBLE', reason)
+    try:
+        matches = imported['library'] == str(library) and proposal['library_identity'] == library_identity(library)
+    except (OSError, ValueError):
+        matches = False
+    if not matches:
+        raise Refusal('LIBRARY_MISMATCH', f"Report is bound to a different or replaced library: {imported['library']!r}")
+    return candidate, problems
+
+
+def mutate(args, library, path, catalog, names, identity, report, imported_candidate=None):
     collections = catalog['collections']
     before = collections.get(identity)
     report['before'] = record_view(identity, before)
@@ -154,7 +227,30 @@ def mutate(args, library, path, catalog, names, identity, report):
         ids = tagger.archive_ids(library, strict=True)
     except (OSError, ValueError) as exc:
         raise Refusal('INVENTORY_ERROR', str(exc)) from exc
-    after = edited_record(args, identity, before, names, ids)
+    creating = args.operation in CREATION_OPERATIONS
+    if creating:
+        if imported_candidate is None:
+            after, problems = new_record(args.name, args.description, [])
+            if 'name' in after:
+                ensure_unique_name(after['name'], names)
+        else:
+            after, problems = imported_candidate
+            require_members(after['members'], ids)
+        if problems:
+            if imported_candidate is not None:
+                for field, message in problems.items():
+                    correction = ('supply a valid --name' if field == 'name'
+                                  else "replace with --description or clear with --description=''")
+                    report['issues'].append(dict(category='INVALID_PROPOSED_METADATA',
+                                                 message=f'{message}; {correction}'))
+                return
+            raise ValueError(next(iter(problems.values())))
+        if imported_candidate is not None:
+            ensure_unique_name(after['name'], names)
+            if args.apply and report['proposal']['partial'] and not args.accept_partial:
+                raise Refusal('PARTIAL_APPROVAL_REQUIRED', 'Review the omissions and apply with --accept-partial')
+    else:
+        after = edited_record(args, identity, before, names, ids)
     report['after'] = record_view(identity, after)
     if before == after:
         report.update(result='no_change', exit_status=0)
@@ -162,7 +258,7 @@ def mutate(args, library, path, catalog, names, identity, report):
     if not args.apply:
         report.update(result='would_change', exit_status=0)
         return
-    if args.operation == 'create':
+    if creating:
         identity = str(uuid.uuid4())
         while identity in collections:
             identity = str(uuid.uuid4())
@@ -190,6 +286,7 @@ def run(args, report):
         category = 'CONFIG_ERROR' if args.library is None else 'LIBRARY_ERROR'
         raise Refusal(category, str(exc)) from exc
     report['library'] = str(library)
+    candidate = import_candidate(args, library, report) if args.operation == 'from-import' else None
     root = library / 'bookmarks'
     try:
         if not stat.S_ISDIR(root.lstat().st_mode):
@@ -216,7 +313,7 @@ def run(args, report):
         report.update(result='ok', exit_status=0)
         return
     identity = None
-    if args.operation != 'create':
+    if args.operation not in CREATION_OPERATIONS:
         identity = target_id(args.target, names, collections)
         if identity is None:
             raise Refusal('COLLECTION_NOT_FOUND', f'Collection not found: {args.target!r}',
@@ -224,7 +321,7 @@ def run(args, report):
     if args.operation == 'show':
         show(library, record_view(identity, collections[identity]), report)
     else:
-        mutate(args, library, path, catalog, names, identity, report)
+        mutate(args, library, path, catalog, names, identity, report, candidate)
 
 
 def print_record(label, record):
@@ -234,6 +331,37 @@ def print_record(label, record):
     print(f'{label}: {record["name"]} [{record["id"] or "ID assigned on apply"}]')
     if 'description' in record:
         print(record['description'])
+
+
+def safe_text(value):
+    return ''.join(char if char.isprintable() or char == '\t' else ascii(char)[1:-1] for char in value)
+
+
+def print_proposal(proposal):
+    candidate = proposal['candidate']
+    print(f"Collection proposal: {proposal['status']}")
+    if 'name' in candidate:
+        print('  Name: ' + safe_text(candidate['name']))
+    else:
+        title = proposal['title']
+        print('  Playlist title: ' + ('(missing)' if title is None else ascii(title)))
+    if 'description' in candidate:
+        print('  Description:')
+        for line in candidate['description'].split('\n'):
+            print('    ' + safe_text(line))
+    elif 'description' in proposal['metadata_issues']:
+        print('  Playlist description: ' + ascii(proposal['description']))
+    else:
+        print('  Description: (none)')
+    print('  Members in playlist order: ' + (', '.join(candidate['members']) or '(none)'))
+    for entry in proposal['omitted']:
+        reason = entry['reason']
+        print(f"  Omitted position {entry['position']} ({entry['id'] or 'unknown ID'}): "
+              f"{entry['outcome'].replace('_', ' ')}" + (f' — {ascii(reason)}' if reason else ''))
+    for entry in proposal['repeats']:
+        print(f"  Position {entry['position']} ({entry['id']}) repeats position {entry['duplicate_of']}")
+    if proposal['partial'] and proposal['status'] == 'eligible':
+        print('  Applying these omissions requires --accept-partial.')
 
 
 def emit(args, report):
@@ -256,12 +384,18 @@ def emit(args, report):
         label = 'APPLY' if args.apply else 'DRY RUN'
         print(f'{label}: {args.operation} | {getattr(args, "target", getattr(args, "name", ""))!r}'
               f' | {report["library"] or args.library or "(configured library)"}')
-        for key in ('before', 'after'):
-            record = report[key]
-            if record is not None or report['result'] in {'no_change', 'would_change', 'applied'}:
-                print_record(key.capitalize(), record)
-                if record is not None:
-                    print('  Members: ' + (', '.join(record['members']) or '(none)'))
+        if args.operation == 'from-import':
+            if 'proposal' in report:
+                print_proposal(report['proposal'])
+            if report['result'] == 'applied':
+                print(f"  Collection ID: {report['after']['id']}")
+        else:
+            for key in ('before', 'after'):
+                record = report[key]
+                if record is not None or report['result'] in {'no_change', 'would_change', 'applied'}:
+                    print_record(key.capitalize(), record)
+                    if record is not None:
+                        print('  Members: ' + (', '.join(record['members']) or '(none)'))
         catalog = report['catalog']
         if catalog['backup']:
             print(f'BACKUP: {catalog["backup"]}')
@@ -271,11 +405,15 @@ def emit(args, report):
         elif report['result'] == 'no_change':
             print('No changes needed.')
         elif report['result'] == 'would_change':
-            print('No files modified. Repeat with --apply to save.')
+            apply_flags = '--apply --accept-partial' if report.get('proposal', {}).get('partial') else '--apply'
+            print(f'No files modified. Repeat with {apply_flags} to save.')
     for issue in report['issues']:
         level = 'WARNING' if report['result'] == 'partial' else 'ERROR'
         location = f'{issue["path"]}: ' if 'path' in issue else ''
-        print(f'{level}: {location}{issue["message"]}', file=sys.stderr)
+        message = issue['message']
+        if args.operation == 'from-import':
+            message = safe_text(message)
+        print(f'{level}: {location}{message}', file=sys.stderr)
 
 
 def main(argv=None):

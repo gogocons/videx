@@ -18,13 +18,12 @@ from urllib.parse import parse_qs, unquote, urlsplit
 sys.dont_write_bytecode = True
 from videx_config import default_library
 from videx_identity import valid_id
+from videx_import_report import OUTCOMES, PLAYLIST_ID, library_identity, member_ids
 
 SCRIPTS = Path(__file__).resolve().parent
 spec = spec_from_file_location('import_bookmark_find', SCRIPTS / 'yt-bookmark-find.py')
 finder = module_from_spec(spec)
 spec.loader.exec_module(finder)
-OUTCOMES = ('created', 'would_create', 'skipped_existing', 'duplicate_input',
-            'invalid_input', 'unavailable', 'failed', 'not_processed')
 
 
 def outcome_label(value):
@@ -116,7 +115,7 @@ def playlist_url(value):
         raise ValueError('Expected a public YouTube playlist URL without credentials, ports, or fragments')
     query = parse_qs(url.query, keep_blank_values=True)
     ids = query.get('list', [])
-    if (len(ids) != 1 or not re.fullmatch(r'(?:PL|EC|UU|FL|UL|TL|PU|OLAK5uy_)[A-Za-z0-9_-]{10,}', ids[0])):
+    if len(ids) != 1 or not PLAYLIST_ID.fullmatch(ids[0]):
         raise ValueError('Missing, ambiguous, or unsupported public playlist ID (account lists and mixes are unsupported)')
     if url.hostname in hosts and url.path == '/playlist':
         if 'v' in query:
@@ -271,7 +270,7 @@ def run_command(command):
 
 
 def apply_entries(entries, library, report):
-    """Execute normalized candidates without depending on the discovery source."""
+    """Execute normalized candidates and return whether the batch ran to completion."""
     active = None
     try:
         with tempfile.TemporaryDirectory(prefix='videx-import-') as temporary:
@@ -309,8 +308,9 @@ def apply_entries(entries, library, report):
                     raise KeyboardInterrupt
                 if result.get('fatal'):
                     report['errors'].append('Capture refused unsafe library state; remaining entries were not processed')
-                    break
+                    return False
                 active = None
+        return True
     except KeyboardInterrupt:
         report['interrupted'] = True
         report['errors'].append('Interrupted; completed bookmarks are preserved')
@@ -329,22 +329,57 @@ def apply_entries(entries, library, report):
         for entry in entries:
             if entry['outcome'] == 'would_create':
                 entry['outcome'] = 'not_processed'
+    return False
+
+
+def collection_proposal(report, library, completed, initial_binding, binding_error):
+    proposal = dict(acquisition='stopped', status='refused', reason=None, library_identity=None)
+    if report['source']['discovery'] != 'complete':
+        proposal['reason'] = 'Playlist discovery did not complete: ' + report['errors'][0]
+    elif report['interrupted']:
+        proposal['reason'] = 'Playlist import was interrupted'
+    elif not completed or report['exit_status'] == 2:
+        proposal['reason'] = 'Playlist acquisition stopped before completion'
+    elif not report['apply']:
+        proposal.update(acquisition='preview', status='preview')
+    else:
+        proposal['acquisition'] = 'completed'
+        members = member_ids(report['entries'])
+        if not members:
+            proposal.update(status='empty', reason='No eligible local bookmarks')
+        else:
+            try:
+                if binding_error is not None:
+                    raise ValueError(binding_error)
+                current = inventory(library)
+                binding = library_identity(library)
+                if any(binding[key] != value for key, value in initial_binding.items()):
+                    raise ValueError('Library directories changed during import')
+                missing = [identity for identity in members if identity not in current]
+                if missing:
+                    raise ValueError('Confirmed bookmarks disappeared during import: ' + ', '.join(missing))
+            except (OSError, ValueError) as exc:
+                proposal['reason'] = f'Cannot confirm proposal library and membership: {exc}'
+            else:
+                proposal.update(status='eligible', library_identity=binding)
+    return proposal
 
 
 def emit(report, as_json):
     counts = Counter(entry['outcome'] for entry in report['entries'])
     report['summary'] = {name: counts[name] for name in OUTCOMES}
+    proposal = report.get('collection_proposal')
     if as_json:
-        print(json.dumps(report, ensure_ascii=False))
+        print(json.dumps(report, ensure_ascii=proposal is not None))
         return
     source = report.get('source', {})
     if source.get('type') == 'playlist':
         print(f"Source: public YouTube playlist {source.get('id') or '(unresolved)'}")
-        print(f"Playlist URL: {json.dumps(source['url'], ensure_ascii=False)}")
+        print(f"Playlist URL: {json.dumps(source['url'], ensure_ascii=proposal is not None)}")
         if source.get('title') is not None:
-            print(f"Playlist title: {json.dumps(source['title'], ensure_ascii=False)}")
+            print(f"Playlist title: {json.dumps(source['title'], ensure_ascii=proposal is not None)}")
         if source.get('description') is not None:
-            print(f"Playlist description: {json.dumps(source['description'], ensure_ascii=False)}")
+            print(f"Playlist description: {json.dumps(source['description'], ensure_ascii=proposal is not None)}")
         print(f"Discovery: {source['discovery']}; discovered entries: {source.get('discovered_entries', 0)}; "
               f"unique valid video IDs: {source.get('unique_valid_ids', 0)}")
     print(f"{'Apply' if report['apply'] else 'Preview'} library: {report['library'] or '(unresolved)'}")
@@ -355,16 +390,28 @@ def emit(report, as_json):
         if 'duplicate_of' in entry:
             unit = 'position' if 'position' in entry else 'line'
             detail = f"first occurrence: {unit} {entry['duplicate_of']}"
+        elif detail and proposal is not None:
+            detail = ascii(detail)
         location = f"Position {entry['position']}" if 'position' in entry else f"Line {entry['line']}"
         print(f"{location}: {outcome_label(entry['outcome'])}: "
               f"{entry['id'] or entry['input']}" + (f' — {detail}' if detail else ''))
     print('Summary: ' + ', '.join(f"{outcome_label(name)}: {count}"
                                 for name, count in report['summary'].items()))
+    if proposal is not None:
+        print(f"Collection proposal: {proposal['status']} ({proposal['acquisition']})")
+        if proposal['reason']:
+            print(f"  {ascii(proposal['reason'])}")
+        if proposal['status'] == 'preview':
+            print('  Existing bookmarks are listed as skipped existing. Would create entries await capture.')
+        if proposal['status'] == 'eligible':
+            print('  Members in playlist order: ' + ', '.join(member_ids(report['entries'])))
+            print('  Save the JSON report to review it with collection from-import.')
     print(f"Final index: {report['index']['status']}")
     if report['index']['status'] == 'failed':
-        print(report['index'].get('diagnostics', '').strip(), file=sys.stderr)
+        diagnostics = report['index'].get('diagnostics', '').strip()
+        print(ascii(diagnostics) if proposal is not None else diagnostics, file=sys.stderr)
     for error in report['errors']:
-        print(f'ERROR: {error}', file=sys.stderr)
+        print(f'ERROR: {ascii(error) if proposal is not None else error}', file=sys.stderr)
 
 
 def main(argv=None):
@@ -377,10 +424,16 @@ def main(argv=None):
     mode.add_argument('--apply', action='store_true', help='Create missing bookmarks')
     mode.add_argument('--dry-run', action='store_true', help='Read-only preview (default)')
     parser.add_argument('--no-re-index', action='store_true', help='Suppress final index rebuild')
+    parser.add_argument('--propose-collection', action='store_true', help='Include a playlist Collection proposal')
     parser.add_argument('--json', action='store_true', help='Print one JSON report')
     args = parser.parse_args(argv)
+    if args.propose_collection and args.playlist is None:
+        parser.error('--propose-collection requires --playlist')
     report = dict(report_version=1, apply=args.apply, library=None, entries=[], errors=[],
                   interrupted=False, index=dict(status='not_requested'), exit_status=2)
+    library = None
+    completed = False
+    initial_binding, binding_error = {}, None
     try:
         if args.playlist is None:
             report['entries'] = read_txt(args.file.expanduser())
@@ -393,6 +446,11 @@ def main(argv=None):
         report['library'] = str(library)
         if library.name == 'bookmarks':
             raise ValueError('Output must be the library root, not bookmarks/')
+        if args.propose_collection and args.apply:
+            try:
+                initial_binding = library_identity(library, allow_missing=True)
+            except (OSError, ValueError) as exc:
+                binding_error = str(exc)
         existing = inventory(library)
         if args.playlist is not None:
             report['entries'] = discover_playlist(canonical_url, report['source'])
@@ -407,7 +465,9 @@ def main(argv=None):
             for command in ('bash', 'python3', 'yt-dlp'):
                 if not shutil.which(command):
                     raise ValueError(f'Missing required command: {command}')
-            apply_entries(report['entries'], library, report)
+            completed = apply_entries(report['entries'], library, report)
+        else:
+            completed = True
         created = any(e['outcome'] == 'created' for e in report['entries'])
         if not args.apply:
             report['index']['status'] = 'preview_no_writes'
@@ -446,6 +506,15 @@ def main(argv=None):
                 entry['outcome'] = 'not_processed'
     if report['exit_status'] == 2:
         report['index']['status'] = 'preflight_refused'
+    if args.propose_collection:
+        try:
+            report['collection_proposal'] = collection_proposal(
+                report, library, completed, initial_binding, binding_error)
+        except KeyboardInterrupt:
+            report.update(interrupted=True, exit_status=130)
+            report['errors'].append('Interrupted; completed bookmarks are preserved')
+            report['collection_proposal'] = collection_proposal(
+                report, library, False, initial_binding, binding_error)
     emit(report, args.json)
     return report['exit_status']
 

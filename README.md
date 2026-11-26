@@ -36,13 +36,18 @@ Each standalone page contains a thumbnail, description, metadata, and links to t
 - Upgrade saved bookmark pages offline, using previews and backups, and keep your library outside the source repository.
 - Import a TXT backlog or public YouTube playlist with read-only previews, duplicate checks, per-entry results, and one final index rebuild.
 
-The current source includes manual Collection management and offline Collection browsing. Optional playlist-to-Collection creation remains planned. The v0.4.0 badge identifies the recorded release snapshot. [Collections milestones](docs/DEVELOPMENT.md#collections-milestones)
+The current source includes manual Collection management, offline Collection browsing, and optional playlist-derived Collections. The v0.4.0 badge identifies the recorded release snapshot. [Collections milestones](docs/DEVELOPMENT.md#collections-milestones)
 
 Preview a TXT backlog with `./videx import --file backlog.txt` or preview a
 public playlist with `./videx import --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'`.
 Add `--apply` to capture new bookmarks. TXT preview works offline; playlist preview
 uses the network for discovery. Neither writes to the library. See the
 [batch import format, examples, and recovery guide](docs/BATCH_IMPORT.md).
+
+For optional Collection creation, save a playlist import report with
+`--propose-collection --apply --no-re-index --json`. Review it offline with
+`./videx collection from-import REPORT`, apply it separately, then rebuild the
+index. [Playlist-to-Collection walkthrough](docs/BATCH_IMPORT.md#playlist-to-collection)
 
 ## Requirements
 

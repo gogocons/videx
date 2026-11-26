@@ -269,7 +269,7 @@ class PlaylistTests(unittest.TestCase):
             self.assertEqual(len(indexes), 0 if suppress else 1)
 
     def test_discovery_interruption_keeps_library_absent(self):
-        process = subprocess.Popen(self.command('--apply'), env=dict(self.env, PLAYLIST_SLEEP='1'),
+        process = subprocess.Popen(self.command('--apply', '--propose-collection'), env=dict(self.env, PLAYLIST_SLEEP='1'),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             deadline = time.monotonic() + 15
@@ -285,7 +285,10 @@ class PlaylistTests(unittest.TestCase):
                 process.kill()
                 process.communicate()
         self.assertEqual(process.returncode, 130, stderr)
-        self.assertEqual(json.loads(stdout)['source']['discovery'], 'interrupted')
+        report = json.loads(stdout)
+        self.assertEqual(report['source']['discovery'], 'interrupted')
+        self.assertEqual(report['collection_proposal']['acquisition'], 'stopped')
+        self.assertEqual(report['collection_proposal']['status'], 'refused')
         self.assertFalse(self.library.exists())
 
     def test_cli_sources_are_required_and_mutually_exclusive_and_human_report(self):

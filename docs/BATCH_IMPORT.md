@@ -3,7 +3,7 @@
 [Back to README](../README.md) · [Usage](USAGE.md) · [Development](DEVELOPMENT.md) · [Data formats](DATA_FORMATS.md) · [Safety](SAFETY.md) · [Batch import](BATCH_IMPORT.md)
 
 Import a backlog or public YouTube playlist as individual standalone bookmarks.
-Optional playlist-to-Collection creation is a [future milestone](DEVELOPMENT.md#collections-milestones). Both input adapters use the
+An optional [playlist-to-Collection workflow](#playlist-to-collection) uses the completed import report. Both input adapters use the
 same capture, metadata curation, and HTML generation pipeline as single-video
 capture, without changing bookmark or catalog formats.
 
@@ -36,6 +36,72 @@ actual playlist ID. `--output` selects the library root, never its `bookmarks/`
 subdirectory. Otherwise the existing `config.local.json` setting or project-root
 fallback applies. Invalid configuration refuses the operation; explicit output
 overrides configuration. `--apply` and `--dry-run` are mutually exclusive.
+
+## Playlist to Collection
+
+```text
+./videx import --playlist URL --propose-collection [--output DIR] [--apply | --dry-run] [--no-re-index] [--json]
+```
+
+Run `./videx import --playlist URL --apply` for ordinary capture. Add
+`--propose-collection` to include proposal information in the report. On an
+import preview it shows which positions already have local bookmarks and which
+await capture. An applicable proposal requires a completed applied import.
+
+Capture and save the report with the index rebuild suppressed. Substitute the
+selected library and a supported public playlist URL. Exit status `1` can still
+produce a usable report, so review it before deciding whether to apply.
+
+```bash
+library='/path/to/library'
+playlist='https://www.youtube.com/playlist?list=PLAYLIST_ID'
+./videx import --playlist "$playlist" --output "$library" \
+  --propose-collection --apply --no-re-index --json > playlist-import.json
+```
+
+The remaining steps work offline. Review the title, description, ordered members,
+omitted entries, and duplicate positions. A completed import can propose an
+existing-only playlist. Each eligible local bookmark appears once, including
+locally saved private or deleted entries and bookmarks tagged `hidden`.
+
+```bash
+./videx collection from-import playlist-import.json --library "$library"
+./videx collection from-import playlist-import.json --library "$library" --apply
+./videx index "$library"
+```
+
+For an eligible proposal with omitted entries, use the same preview and approve
+the reviewed omissions explicitly on apply.
+
+```bash
+./videx collection from-import playlist-import.json --library "$library" \
+  --apply --accept-partial
+./videx index "$library"
+```
+
+To edit metadata, preview with the desired overrides and repeat them on apply.
+Either override works on its own, and `--description=''` clears the description.
+
+```bash
+./videx collection from-import playlist-import.json --library "$library" \
+  --name 'Field Notes' --description 'Videos to revisit.'
+./videx collection from-import playlist-import.json --library "$library" \
+  --name 'Field Notes' --description 'Videos to revisit.' --apply
+./videx index "$library"
+```
+
+Decline by stopping after preview. If the import captured bookmarks, run
+`./videx index "$library"` when ready, even if Collection creation was declined
+or failed. A name conflict, including a repeat apply under the same name,
+requires an unused `--name` or skipping creation.
+
+Use `collection from-import -` to read JSON from stdin. The selected library must
+match the canonical path and directory identities in the report. A report whose
+binding changed after a move, copy, or restore needs a fresh import. Missing
+proposed members or an unsafe inventory cause a refusal. Restore the bookmarks
+or run the import again and review the new proposal. An empty result, an old
+report without the proposal fields, an import preview, or an interrupted or
+refused acquisition cannot be applied. [Report format](DATA_FORMATS.md#playlist-collection-report-extension) · [Apply safety](SAFETY.md#playlist-derived-collections)
 
 ## Durable TXT format
 
@@ -210,6 +276,6 @@ the same import rediscovers the playlist and skips saved IDs, retrying entries t
 previously failed. A changing playlist or counts that disagree with the enumerated
 entries may require retrying discovery. Missing optional counts are allowed when
 there is no evidence of truncation; the importer cannot independently prove that
-YouTube exposed every entry. Playlist order and metadata are retained in the
-report only, without catalog/schema changes, synchronization, or Collection creation.
+YouTube exposed every entry. The import report retains playlist order and metadata.
+Collection creation is a separate local catalog operation using the completed report.
 No authentication/private-playlist support or playlist deletion is provided.
