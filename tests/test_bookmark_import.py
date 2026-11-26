@@ -245,8 +245,11 @@ if mode == 'unsafe_library':
         path.write_text(generator.make_document({'id': A, 'title': 'Hidden synthetic'},
             'data:image/png;base64,' + base64.b64encode(PNG).decode()))
         catalog = self.library / 'catalog.json'
+        collection_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
         data = json.dumps({'version': 1, 'bookmarks': {A: {'tags': ['hidden']},
-                           B: {'tags': ['Research']}}, 'collections': {'reserved': {'future': True}}})
+                           B: {'tags': ['Research']}}, 'collections': {
+                               collection_id: {'name': 'Saved', 'members': [A, B], 'future': True},
+                           }})
         catalog.write_text(data)
         original = path.read_bytes()
         status, report = self.run_import('--apply')
@@ -260,6 +263,9 @@ if mode == 'unsafe_library':
         self.assertNotIn(A, index)
         self.assertIn(B, index)
         self.assertIn('Research', index)
+        payload = index.split('<script id="bookmark-data" type="application/json">', 1)[1]
+        self.assertEqual(json.loads(payload.split('</script>', 1)[0])['collections'],
+                         [{'id': collection_id, 'name': 'Saved', 'members': [B]}])
 
     def test_inventory_inspection_errors_are_not_treated_as_missing(self):
         self.library.mkdir()

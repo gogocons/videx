@@ -146,7 +146,7 @@ For a disposable demonstration library, supply synthetic metadata such as `{"id"
 
 The opener uses `config.local.json` or falls back to the checkout root when there is no config. An explicit `--library DIR` bypasses local config, even if the config is invalid. Give the library root and quote paths that contain spaces or shell metacharacters. Home-relative paths such as `'~/Documents/Video Bookmarks'` are expanded.
 
-The command requires a readable, nonempty, regular `index.html` and rejects index symlinks. It hands the file to the default HTML application using `open` on macOS or `xdg-open` on Linux. Linux requires a graphical session with `DISPLAY` or `WAYLAND_DISPLAY` set. Opening uses the saved snapshot, so changes to bookmarks or tags appear after a separate rebuild. The opener needs no network, local server, catalog, or bookmark scan.
+The command requires a readable, nonempty, regular `index.html` and rejects index symlinks. It hands the file to the default HTML application using `open` on macOS or `xdg-open` on Linux. Linux requires a graphical session with `DISPLAY` or `WAYLAND_DISPLAY` set. Opening uses the saved snapshot, so changes to bookmarks, tags, or Collections appear after a separate rebuild. The opener needs no network, local server, catalog, or bookmark scan.
 
 Status `0` means the desktop launcher accepted the request. Status `1` means the target or launcher could not be used, or the platform is unsupported. Status `2` means the arguments or configuration are invalid.
 
@@ -156,17 +156,22 @@ Without `--re-index`, bookmark capture does **not** rebuild the index. You can r
 
 ```bash
 ./videx index
+./videx index '/path/to/library'
 ```
 
 Rebuilding the index excludes every bookmark carrying the reserved personal tag `hidden` (case-insensitive, with surrounding whitespace normalized). Excluded bookmarks contribute no embedded metadata, links, thumbnails, search results, channel listings, or counts. Channels and Single Entries groups are calculated exclusively from visible bookmarks. Other normalized personal tags from the selected library's `catalog.json` appear as wrapping badges on bookmark cards and are searchable through the existing search bar. Each tag supports case-insensitive partial matches. Missing catalogs or tag records produce no tag row; orphan records are ignored. Generated indexes remain self-contained offline.
 
 Search stays visible and matches a trimmed, case-insensitive phrase within a title, channel, description, video ID, or individual personal tag. Open **Filters** to select a Channel and/or Personal Tag. Channel offers **All Channels**, **Single Entries** (channels with exactly one visible bookmark), and individual channels with at least two visible bookmarks. Personal Tag offers **All Personal Tags** and tags from visible bookmarks only. Tag selection matches exact membership using the catalog's Python Unicode case-folding identities; display capitalization is retained. Search, Channel, and Personal Tag combine with AND: every active condition must match. Filter options and Single Entries grouping remain based on the whole visible library, regardless of the current results.
 
-The panel starts closed; closing it preserves selections. **Filters (1)** or **Filters (2)** counts active Channel and Personal Tag selections, excluding Search and Sort. Remove an individual chip below the toolbar to clear only that filter; **Clear Filters** clears both structured filters while preserving Search and Sort. Results and their announced count update immediately, including when no bookmarks match. Sort remains independently available with Newest upload (default), Oldest upload, Title A–Z, Title Z–A, and Channel A–Z. Selections are not saved to URLs or local storage.
+The panel starts closed and closing it preserves selections. **Filters (1)** or **Filters (2)** counts active Channel and Personal Tag selections. Remove an individual chip below the toolbar to clear only that filter. **Clear Filters** clears both structured filters while preserving Search, Sort, and the current Collection. Results and their announced count update immediately.
 
-Use Tab to navigate the native controls and Enter or Space to toggle Filters. Closed panel controls are removed from keyboard navigation. Escape closes an open panel and returns focus to Filters. Removing a chip also returns focus to Filters; Clear Filters moves focus to Channel in the open panel.
+All browsing contexts share **Newest**, **Oldest**, **Title A-Z**, **Title Z-A**, and **Channel A-Z**. **Newest** is the default. **Newest** and **Oldest** use the video's upload date. Switching contexts retains the active sort, and the stored member order has no effect on card order. Selections are not saved to URLs or local storage.
 
-Regenerate the index after changes to its search functionality or catalog tags; an existing `index.html` contains a snapshot of both the search code and tag data. No network connection is needed to rebuild or search the index.
+Use Tab to move through Search, Filters, and Sort. Enter or Space toggles Filters. When the panel is open, Tab after Sort reaches Collection (when available), Channel, Personal Tag, and Clear Filters. The closed panel is skipped. Closing with the Filters button or Escape returns focus to Filters. Removing a chip also returns focus to Filters. Clear Filters moves focus to Channel in the open panel.
+
+If Tab skips buttons or selects, check your browser and operating system's keyboard navigation settings. In Firefox on macOS, look for **Use the tab key to move focus between form controls and links** in Settings.
+
+Regenerate the index to pick up updated browsing code, catalog tags, or Collections. The saved `index.html` contains the code and visible snapshot data. You can rebuild and browse offline without a local web server.
 
 `hidden` is an organizational visibility control, not a security feature. Bookmark files, directories, catalog records, and CLI lookup/tag reports remain unchanged and accessible. Older index copies can still contain previously visible bookmarks, and failed rebuilds leave the existing index intact.
 
@@ -179,6 +184,12 @@ python3 -B scripts/yt-bookmark-index.py '/path/to/library' --thumbnail-width 360
 The default width is 360 pixels; accepted values are 64–1920. Optional Pillow reduces embedded thumbnail sizes; without it the original images are embedded. Conversion failures warn and fall back to the original image.
 
 All-hidden libraries publish an empty-state index; libraries with no valid bookmarks leave the existing index untouched. See [index publication and statuses](SAFETY.md#index-publication-and-statuses).
+
+### Browse Collections
+
+Open **Filters** to find **Collection** above Channel and Personal Tag. The selector appears when the saved index contains Collections and starts at **All Bookmarks**. Select a Collection to see its name, optional description, and cards in the same grid. The result count shows how many cards match and how many visible members the Collection contains. Closing Filters keeps the selection, summary, and count visible in the browsing view. To return to the library-wide view, reopen Filters and select **All Bookmarks**. Search, Channel, and Personal Tag selections carry across contexts and apply within the current Collection. Header statistics and filter options continue to describe the whole visible library.
+
+Missing, skipped, ambiguous, and hidden members are omitted from the grid and visible member total. Their references stay in the catalog. Empty Collections and Collections whose members are all unavailable remain selectable. The index distinguishes **This Collection has no visible bookmarks** from **No matching bookmarks found** when Search or Filters narrow a Collection that has visible members.
 
 ## Personal catalog management
 
@@ -244,7 +255,7 @@ Only list and show are read-only operations. Every mutation previews until you s
 
 Targets accept a case-insensitive normalized name, `id:UUID`, or `name:TEXT` for explicit name selection. Place options before `--` to pass literal option-like inputs, for example `./videx collection add --apply -- 'Field Notes' -AAAAAAAAAA`. All operations accept `--json`. Use `./videx collection --help` or `./videx collection OPERATION --help` for usage. See [catalog reports](DATA_FORMATS.md#collection-json-report-version-1) and [Collection safety](SAFETY.md#collection-mutations-and-inspection) for the output and exit-status contracts.
 
-Collection edits never rebuild the index automatically. Collection browsing is planned for [Milestone 2](DEVELOPMENT.md#collections-milestones), where a successful rebuild will be required to see catalog changes in the saved index.
+Collection edits never rebuild the index automatically. Run `./videx index '/path/to/library'` for an explicitly selected library, then reload or reopen the saved index to see the changes. See [Browse Collections](#browse-collections).
 
 ## Lookup and library integrity audit
 

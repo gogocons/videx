@@ -6,24 +6,10 @@ from pathlib import Path
 import stat
 import sys
 from videx_catalog import CatalogWriteError, load, write_catalog
+from videx_catalog import normalize_tag as normalized, unique_tags as unique
 from videx_config import default_library
 from videx_identity import VIDEO_ID as ID, IdentityError, bookmark_identity
 from videx_inventory import scan_bookmarks
-
-
-def normalized(tag):
-    tag = ' '.join(tag.strip().split())
-    if not tag or any(ord(c) < 32 for c in tag) or len(tag) > 80:
-        raise ValueError('Tags must be nonempty, at most 80 characters, and contain no control characters')
-    return 'hidden' if tag.casefold() == 'hidden' else tag
-
-
-def unique(tags):
-    out = {}
-    for value in tags:
-        tag = normalized(value)
-        out.setdefault(tag.casefold(), tag)
-    return list(out.values())
 
 
 def inspect_archive(root):

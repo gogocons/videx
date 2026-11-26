@@ -67,6 +67,21 @@ def load(path):
     return load_catalog(path)[1]
 
 
+def normalize_tag(tag):
+    tag = ' '.join(tag.strip().split())
+    if not tag or any(ord(c) < 32 for c in tag) or len(tag) > 80:
+        raise ValueError('Tags must be nonempty, at most 80 characters, and contain no control characters')
+    return 'hidden' if tag.casefold() == 'hidden' else tag
+
+
+def unique_tags(tags):
+    out = {}
+    for value in tags:
+        tag = normalize_tag(value)
+        out.setdefault(tag.casefold(), tag)
+    return list(out.values())
+
+
 def collection_name(value):
     if not isinstance(value, str) or any(
             unicodedata.category(char) in {'Cc', 'Cs', 'Zl', 'Zp'} for char in value):

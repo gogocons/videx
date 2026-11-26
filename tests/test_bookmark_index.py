@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -21,6 +22,9 @@ from test_bookmark_generate import assert_browser_json, numeric_metadata_documen
 
 
 PROJECT = Path(__file__).resolve().parents[1]
+FIELD_NOTES = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+RESEARCH = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+EMPTY = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
 with patch.object(sys, 'path', [str(PROJECT / 'scripts')] + sys.path):
     spec = spec_from_file_location('bookmark_index', PROJECT / 'scripts' / 'yt-bookmark-index.py')
     indexer = module_from_spec(spec)
@@ -195,10 +199,16 @@ class IndexDocumentParser(HTMLParser):
         self.in_style = False
         self.color_schemes = []
         self.elements = []
+        self.sections = []
+        self.section_for_id = {}
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         self.elements.append((tag, attrs))
+        if 'id' in attrs:
+            self.section_for_id[attrs['id']] = self.sections[-1] if self.sections else None
+        if tag == 'section':
+            self.sections.append(attrs.get('id'))
         if tag == 'script':
             self.active = {'attrs': attrs, 'text': ''}
             self.scripts.append(self.active)
@@ -210,6 +220,7 @@ class IndexDocumentParser(HTMLParser):
     def handle_endtag(self, tag):
         if tag == 'script': self.active = None
         if tag == 'style': self.in_style = False
+        if tag == 'section': self.sections.pop()
 
     def handle_data(self, data):
         if self.active is not None: self.active['text'] += data
@@ -238,9 +249,11 @@ class CatalogIndexTests(unittest.TestCase):
                         + '</script>', encoding='utf-8')
         return path
 
-    def catalog(self, records, library=None):
+    def catalog(self, records, library=None, collections=None):
         path = (library or self.root) / 'catalog.json'
-        path.write_text(json.dumps({'version': 1, 'bookmarks': records, 'collections': {}}), encoding='utf-8')
+        path.write_text(json.dumps({'version': 1, 'bookmarks': records,
+                                    'collections': collections if collections is not None else {}}),
+                        encoding='utf-8')
         return path
 
     def run_index(self, directory=None, configured=False):
@@ -281,17 +294,21 @@ class Element {
         }
     }
     replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+    remove() { this.removed = true; }
     setAttribute(name, value) { this.attributes[name] = value; }
     addEventListener(event, handler) { this.handlers[event] = handler; }
     focus() { document.activeElement = this; }
 }
 const elements = Object.fromEntries(
     ['bookmark-data', 'search', 'channel', 'sort', 'grid', 'count', 'empty', 'stats', 'footer',
-     'filters', 'filter-panel', 'personal-tag', 'filter-chips', 'clear-filters']
+     'filters', 'filter-panel', 'personal-tag', 'filter-chips', 'clear-filters',
+     'collection-picker', 'collection', 'collection-options', 'collection-summary',
+     'collection-name', 'collection-description']
         .map(id => [id, new Element(id)]));
 elements['bookmark-data'].textContent = JSON.stringify(input.data);
 elements.sort.value = 'upload-desc';
 elements['filter-panel'].hidden = true;
+elements['collection-picker'].hidden = true;
 elements.filters.setAttribute('aria-expanded', 'false');
 globalThis.document = {
     getElementById: id => elements[id],
@@ -306,6 +323,7 @@ const snapshot = () => ({
     hrefs: elements.grid.children.map(card => card.children[0].href),
     count: elements.count.textContent,
     emptyHidden: elements.empty.hidden,
+    emptyText: elements.empty.textContent,
     stats: elements.stats.textContent,
     channels: elements.channel.children.map(option => option.value),
     tags: elements['personal-tag'].children.map(option => ({key: option.value, label: option.textContent})),
@@ -317,16 +335,30 @@ const snapshot = () => ({
     focus: Object.keys(elements).find(id => elements[id] === document.activeElement) || null,
     query: elements.search.value, channel: elements.channel.value,
     tag: elements['personal-tag'].value, sort: elements.sort.value,
+    collection: elements.collection.value,
+    collectionPickerHidden: elements['collection-picker'].hidden,
+    collectionPickerRemoved: Boolean(elements['collection-picker'].removed),
+    collectionOptions: elements['collection-options'].children.map(option => [option.value, option.textContent]),
+    collectionSummaryHidden: elements['collection-summary'].hidden,
+    collectionName: elements['collection-name'].textContent,
+    collectionDescription: elements['collection-description'].textContent,
+    collectionDescriptionHidden: elements['collection-description'].hidden,
 });
 const results = [snapshot()];
 for (const test of input.cases) {
     if (test.action === 'escape') {
+        if (test.control) elements[test.control].focus();
         document.handlers.keydown({key: 'Escape', preventDefault() {}});
     } else if (test.action === 'chip') {
         const chip = elements['filter-chips'].children[test.index];
         chip.focus();chip.handlers.click();
     } else if (test.action === 'click') {
-        elements[test.control].focus();elements[test.control].handlers.click();
+        if (test.focus) elements[test.focus].focus();
+        else elements[test.control].focus();
+        elements[test.control].handlers.click();
+    } else if (test.action === 'select') {
+        elements[test.control].value = test.value;
+        elements[test.control].handlers.change();
     } else {
         // Existing cases describe complete states; actions above preserve state.
         elements.search.value = test.query || '';
@@ -350,6 +382,293 @@ console.log(JSON.stringify(results));
                                 text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
+
+    def test_collection_browsing_intersects_search_and_library_wide_filters(self):
+        a = self.bookmark('a.html', metadata={'title': 'Needle inside', 'uploader': 'Shared'})
+        b = self.bookmark('b.html', 'BBBBBBBBBBB',
+                          metadata={'title': 'Needle solo', 'uploader': 'Solo'})
+        c = self.bookmark('c.html', 'CCCCCCCCCCC',
+                          metadata={'title': 'Different title', 'uploader': 'Shared'})
+        d = self.bookmark('d.html', 'DDDDDDDDDDD',
+                          metadata={'title': 'Needle outside', 'uploader': 'Outside'})
+        self.bookmark('e.html', 'EEEEEEEEEEE', metadata={'uploader': 'Outside'})
+        name = 'Field <Notes> & Research'
+        description = 'Read </script><script>alert(1)</script> as text.\nReview café & tea.'
+        self.catalog({
+            'AAAAAAAAAAA': {'tags': ['Topic']},
+            'BBBBBBBBBBB': {'tags': ['Topic']},
+            'DDDDDDDDDDD': {'tags': ['Outside only', 'Topic']},
+        }, collections={
+            RESEARCH: {'name': 'Research', 'members': ['DDDDDDDDDDD', 'AAAAAAAAAAA']},
+            FIELD_NOTES: {'name': name, 'description': description,
+                          'members': ['CCCCCCCCCCC', 'BBBBBBBBBBB', 'AAAAAAAAAAA']},
+            EMPTY: {'name': 'Empty', 'members': []},
+        })
+        self.assertEqual(self.run_index()[0], 0)
+        data, parser = self.parsed_output()
+        html = self.output.read_text()
+        self.assertIn('<option value="">All Bookmarks</option>', html)
+        self.assertIn(('label', {'for': 'collection'}), parser.elements)
+        self.assertNotIn(name, html)
+        self.assertNotIn(description.split('\n')[0], html)
+        self.assertEqual(len(parser.scripts), 2)
+        self.assertEqual(len(data['items']), 5)
+        self.assertEqual({entry['id']: entry['members'] for entry in data['collections']}, {
+            FIELD_NOTES: ['CCCCCCCCCCC', 'BBBBBBBBBBB', 'AAAAAAAAAAA'],
+            RESEARCH: ['DDDDDDDDDDD', 'AAAAAAAAAAA'],
+            EMPTY: [],
+        })
+        (initial, _, field_notes, searched, channel, tagged, combined, single,
+         unmatched, cleared, research, empty, all_bookmarks) = self.browser_results([
+            {'action': 'click', 'control': 'filters'},
+            {'action': 'select', 'control': 'collection', 'value': FIELD_NOTES},
+            {'query': 'needle'},
+            {'channel': 'Shared', 'control': 'channel'},
+            {'tag': 'topic', 'control': 'personal-tag'},
+            {'query': 'needle', 'channel': 'Shared', 'tag': 'topic'},
+            {'channel': '__single_entries__', 'control': 'channel'},
+            {'query': 'needle', 'channel': 'Outside', 'tag': 'outside only'},
+            {'action': 'click', 'control': 'clear-filters'},
+            {'action': 'select', 'control': 'collection', 'value': RESEARCH},
+            {'action': 'select', 'control': 'collection', 'value': EMPTY},
+            {'action': 'select', 'control': 'collection', 'value': ''},
+        ])
+        self.assertEqual(initial['collection'], '')
+        self.assertTrue(initial['panelHidden'])
+        self.assertFalse(initial['collectionPickerHidden'])
+        self.assertTrue(initial['collectionSummaryHidden'])
+        self.assertEqual(initial['count'], 'Showing 5 of 5 bookmarks')
+        self.assertEqual(initial['collectionOptions'], [[EMPTY, 'Empty'], [FIELD_NOTES, name],
+                                                        [RESEARCH, 'Research']])
+        self.assertFalse(field_notes['collectionSummaryHidden'])
+        self.assertEqual(field_notes['collectionName'], name)
+        self.assertEqual(field_notes['collectionDescription'], description)
+        self.assertFalse(field_notes['collectionDescriptionHidden'])
+        self.assertEqual(field_notes['count'], 'Showing 3 of 3 bookmarks')
+        self.assertEqual(field_notes['stats'], initial['stats'])
+        self.assertEqual(field_notes['channels'], ['__single_entries__', 'Outside', 'Shared'])
+        self.assertEqual(field_notes['tags'], initial['tags'])
+        self.assertIn({'key': 'outside only', 'label': 'Outside only'}, field_notes['tags'])
+        for state, paths in ((searched, (a, b)), (channel, (a, c)), (tagged, (a, b)),
+                             (combined, (a,)), (single, (b,)), (cleared, (a, b)),
+                             (research, (a, d))):
+            self.assertEqual(state['hrefs'], [path.relative_to(self.root).as_posix() for path in paths])
+        self.assertEqual(unmatched['count'], 'Showing 0 of 3 bookmarks')
+        self.assertFalse(unmatched['emptyHidden'])
+        self.assertEqual(unmatched['emptyText'], 'No matching bookmarks found.')
+        self.assertEqual((cleared['collection'], cleared['query'], cleared['channel'], cleared['tag']),
+                         (FIELD_NOTES, 'needle', '', ''))
+        self.assertEqual(research['count'], 'Showing 2 of 2 bookmarks')
+        self.assertTrue(research['collectionDescriptionHidden'])
+        self.assertEqual(research['collectionDescription'], '')
+        self.assertEqual(empty['count'], 'Showing 0 of 0 bookmarks')
+        self.assertFalse(empty['emptyHidden'])
+        self.assertEqual(empty['emptyText'], 'This Collection has no visible bookmarks.')
+        self.assertEqual(all_bookmarks['count'], 'Showing 3 of 5 bookmarks')
+        self.assertTrue(all_bookmarks['collectionSummaryHidden'])
+
+    def test_collection_sort_controls_preserve_existing_order_and_active_choice(self):
+        for filename, identity, title, date, channel in (
+                ('a.html', 'AAAAAAAAAAA', 'Zulu', '20230101', 'Shared'),
+                ('b.html', 'BBBBBBBBBBB', 'Alpha', '20250101', 'Solo'),
+                ('c.html', 'CCCCCCCCCCC', 'Beta', '', 'Shared'),
+                ('d.html', 'DDDDDDDDDDD', 'Delta', '20240101', 'Outside')):
+            self.bookmark(filename, identity, metadata={'title': title, 'upload_date': date,
+                                                       'uploader': channel})
+        self.catalog({}, collections={
+            FIELD_NOTES: {'name': 'Field Notes', 'members': ['CCCCCCCCCCC', 'BBBBBBBBBBB', 'AAAAAAAAAAA']},
+            RESEARCH: {'name': 'Research', 'members': ['DDDDDDDDDDD', 'BBBBBBBBBBB']},
+        })
+        self.assertEqual(self.run_index()[0], 0)
+        sort_markup, = re.findall(r'<select id="sort"[^>]*>(.*?)</select>', self.output.read_text())
+        self.assertEqual(re.findall(r'<option value="([^"]+)">([^<]+)</option>', sort_markup), [
+            ('upload-desc', 'Newest'), ('upload-asc', 'Oldest'), ('title-asc', 'Title A-Z'),
+            ('title-desc', 'Title Z-A'), ('channel-asc', 'Channel A-Z'),
+        ])
+        _, parser = self.parsed_output()
+        self.assertEqual([attrs['id'] for tag, attrs in parser.elements if tag == 'select'],
+                         ['sort', 'collection', 'channel', 'personal-tag'])
+
+        def select(control, value):
+            return {'action': 'select', 'control': control, 'value': value}
+
+        initial, newest, oldest, title_asc, title_desc, channel_asc, research, all_bookmarks = (
+            self.browser_results([
+                select('collection', FIELD_NOTES), select('sort', 'upload-asc'),
+                select('sort', 'title-asc'), select('sort', 'title-desc'),
+                select('sort', 'channel-asc'), select('collection', RESEARCH), select('collection', ''),
+            ]))
+        for state, sort, order in (
+                (initial, 'upload-desc', 'bdac'), (newest, 'upload-desc', 'bac'),
+                (oldest, 'upload-asc', 'cab'), (title_asc, 'title-asc', 'bca'),
+                (title_desc, 'title-desc', 'acb'), (channel_asc, 'channel-asc', 'acb'),
+                (research, 'channel-asc', 'db'), (all_bookmarks, 'channel-asc', 'dacb')):
+            self.assertEqual(state['sort'], sort)
+            self.assertEqual(state['hrefs'], [f'bookmarks/{letter}.html' for letter in order])
+
+    def test_missing_catalog_and_empty_collection_section_hide_the_picker(self):
+        self.bookmark()
+        for catalog_exists in (False, True):
+            with self.subTest(catalog_exists=catalog_exists):
+                if catalog_exists:
+                    self.catalog({})
+                self.assertEqual(self.run_index()[0], 0)
+                self.assertEqual(self.parsed_output()[0]['collections'], [])
+                initial, expanded = self.browser_results([{'action': 'click', 'control': 'filters'}])
+                self.assertTrue(initial['collectionPickerHidden'])
+                self.assertTrue(expanded['collectionPickerRemoved'])
+                self.assertFalse(expanded['panelHidden'])
+                self.assertEqual(initial['count'], 'Showing 1 of 1 bookmarks')
+
+    def test_collection_disclosure_markup_and_focus_on_collapse(self):
+        self.bookmark()
+        self.catalog({}, collections={
+            FIELD_NOTES: {'name': 'Field Notes', 'description': 'Review later.',
+                          'members': ['AAAAAAAAAAA']},
+        })
+        self.assertEqual(self.run_index()[0], 0)
+        _, parser = self.parsed_output()
+        controls = [(tag, attrs) for tag, attrs in parser.elements
+                    if tag in {'button', 'input', 'select'}]
+        self.assertEqual([attrs['id'] for _, attrs in controls], [
+            'search', 'filters', 'sort', 'collection', 'channel', 'personal-tag', 'clear-filters',
+        ])
+        self.assertEqual(controls[1], ('button', {
+            'id': 'filters', 'type': 'button', 'aria-expanded': 'false', 'aria-controls': 'filter-panel',
+        }))
+        self.assertTrue(all('tabindex' not in attrs and 'disabled' not in attrs
+                            for _, attrs in controls))
+        attrs_by_id = {attrs['id']: attrs for _, attrs in parser.elements if 'id' in attrs}
+        self.assertIn('hidden', attrs_by_id['filter-panel'])
+        self.assertIn('hidden', attrs_by_id['collection-picker'])
+        for control in ('collection', 'channel', 'personal-tag', 'clear-filters'):
+            self.assertEqual(parser.section_for_id[control], 'filter-panel')
+        for control in ('filters', 'collection-summary', 'count'):
+            self.assertIsNone(parser.section_for_id[control])
+        styles = ''.join(parser.styles)
+        self.assertRegex(styles, r'\[hidden\]\{display:none!important\}')
+        self.assertRegex(styles, r'#filters:focus-visible\{outline:2px solid #[0-9a-f]+\}')
+
+        initial, opened, selected, escaped, reopened, clicked = self.browser_results([
+            {'action': 'click', 'control': 'filters'},
+            {'action': 'select', 'control': 'collection', 'value': FIELD_NOTES},
+            {'action': 'escape', 'control': 'collection'},
+            {'action': 'click', 'control': 'filters'},
+            # A pointer click can leave focus in the panel on some browsers.
+            {'action': 'click', 'control': 'filters', 'focus': 'channel'},
+        ])
+        self.assertTrue(initial['collectionSummaryHidden'])
+        self.assertEqual((initial['panelHidden'], initial['expanded']), (True, 'false'))
+        self.assertFalse(opened['collectionPickerRemoved'])
+        self.assertEqual((opened['panelHidden'], opened['expanded']), (False, 'true'))
+        for state in (escaped, clicked):
+            self.assertEqual((state['panelHidden'], state['expanded'], state['focus']),
+                             (True, 'false', 'filters'))
+        for state in (selected, escaped, reopened, clicked):
+            self.assertEqual(state['collection'], FIELD_NOTES)
+            self.assertFalse(state['collectionSummaryHidden'])
+            self.assertEqual(state['collectionName'], 'Field Notes')
+            self.assertEqual(state['collectionDescription'], 'Review later.')
+            self.assertEqual(state['count'], 'Showing 1 of 1 bookmarks')
+
+    def test_collection_projection_omits_unavailable_ambiguous_and_hidden_members(self):
+        self.bookmark('visible-renamed.html', 'aaaaaaaaaaa')
+        self.bookmark('skipped.html', 'BBBBBBBBBBB', metadata={'duration': float('inf')})
+        self.bookmark('ambiguous-renderable.html', 'CCCCCCCCCCC')
+        self.bookmark('ambiguous-skipped.html', 'CCCCCCCCCCC', metadata={'duration': float('inf')})
+        self.bookmark('duplicate-one.html', 'DDDDDDDDDDD')
+        self.bookmark('duplicate-two.html', 'DDDDDDDDDDD')
+        self.bookmark('mismatch [GGGGGGGGGGG].html', 'HHHHHHHHHHH')
+        self.bookmark('hidden-only-filename.html', 'EEEEEEEEEEE',
+                      metadata={'title': 'HiddenOnlyTitle', 'uploader': 'HiddenOnlyChannel',
+                                'description': 'HiddenOnlyDescription'})
+        self.catalog({'EEEEEEEEEEE': {'tags': [' HIDDEN ', 'HiddenOnlyTag']}}, collections={
+            FIELD_NOTES: {'name': 'Field Notes',
+                          'members': ['aaaaaaaaaaa', 'AAAAAAAAAAA', 'BBBBBBBBBBB', 'CCCCCCCCCCC',
+                                      'DDDDDDDDDDD', 'EEEEEEEEEEE', 'GGGGGGGGGGG', 'HHHHHHHHHHH']},
+            EMPTY: {'name': 'Unavailable', 'members': ['EEEEEEEEEEE', 'CCCCCCCCCCC']},
+        })
+        before = snapshot(self.root)
+        before.pop('.')
+        status, stdout, stderr = self.run_index()
+        self.assertEqual(status, 0, stderr)
+        self.assertIn('Indexed 4 bookmarks (3 skipped)', stdout)
+        for vid in ('AAAAAAAAAAA', 'GGGGGGGGGGG', 'HHHHHHHHHHH'):
+            self.assertIn(f'Omitting Collection member {vid}: no resolved bookmark', stderr)
+        self.assertIn('Omitting Collection member BBBBBBBBBBB: bookmark skipped during indexing', stderr)
+        for vid in ('CCCCCCCCCCC', 'DDDDDDDDDDD'):
+            diagnostic = f'Omitting Collection member {vid}: ambiguous bookmark identity'
+            self.assertEqual(stderr.count(diagnostic), 1)
+        self.assertNotIn('EEEEEEEEEEE', stderr)
+        after = snapshot(self.root)
+        after.pop('.')
+        after.pop('index.html')
+        self.assertEqual(after, before)
+        data, _ = self.parsed_output()
+        self.assertCountEqual([item['id'] for item in data['items']],
+                              ['aaaaaaaaaaa', 'CCCCCCCCCCC', 'DDDDDDDDDDD', 'DDDDDDDDDDD'])
+        self.assertEqual(data['collections'], [
+            {'id': FIELD_NOTES, 'name': 'Field Notes', 'members': ['aaaaaaaaaaa']},
+            {'id': EMPTY, 'name': 'Unavailable', 'members': []},
+        ])
+        html = self.output.read_text()
+        for marker in ('EEEEEEEEEEE', 'hidden-only-filename', 'HiddenOnlyTitle', 'HiddenOnlyChannel',
+                       'HiddenOnlyDescription', 'HiddenOnlyTag'):
+            self.assertNotIn(marker, html)
+        _, unavailable = self.browser_results([
+            {'action': 'select', 'control': 'collection', 'value': EMPTY},
+        ])
+        self.assertEqual(unavailable['count'], 'Showing 0 of 0 bookmarks')
+        self.assertEqual(unavailable['emptyText'], 'This Collection has no visible bookmarks.')
+
+    def test_all_hidden_library_keeps_collections_selectable_in_empty_snapshot(self):
+        self.bookmark(metadata={'title': 'HiddenOnlyTitle'})
+        self.catalog({'AAAAAAAAAAA': {'tags': ['hidden']}}, collections={
+            FIELD_NOTES: {'name': 'Field Notes', 'members': ['AAAAAAAAAAA']},
+        })
+        self.output.write_text('old index containing HiddenOnlyTitle')
+        self.assertEqual(self.run_index()[0], 0)
+        data, _ = self.parsed_output()
+        self.assertEqual(data['items'], [])
+        self.assertEqual(data['collections'], [{'id': FIELD_NOTES, 'name': 'Field Notes', 'members': []}])
+        self.assertNotIn('HiddenOnlyTitle', self.output.read_text())
+        self.assertNotIn('AAAAAAAAAAA', self.output.read_text())
+        initial, selected = self.browser_results([
+            {'action': 'select', 'control': 'collection', 'value': FIELD_NOTES},
+        ])
+        self.assertFalse(initial['collectionPickerHidden'])
+        self.assertEqual(selected['count'], 'Showing 0 of 0 bookmarks')
+        self.assertEqual(selected['emptyText'], 'This Collection has no visible bookmarks.')
+
+    def test_invalid_collection_records_preserve_saved_index_before_scanning(self):
+        self.bookmark()
+        for invalid in ([], {'name': ' untrimmed ', 'members': []},
+                        {'name': 'Example', 'description': '', 'members': []},
+                        {'name': 'Example', 'members': ['AAAAAAAAAAA', 'AAAAAAAAAAA']},
+                        {'name': 'Example', 'members': ['invalid']}):
+            with self.subTest(invalid=invalid):
+                catalog = self.catalog({}, collections={FIELD_NOTES: invalid})
+                original = catalog.read_bytes()
+                with patch.object(indexer, 'scan_bookmarks') as scan:
+                    self.assert_catalog_refused()
+                scan.assert_not_called()
+                self.assertEqual(catalog.read_bytes(), original)
+
+    def test_failed_collection_index_publication_preserves_snapshot_and_sources(self):
+        self.bookmark()
+        self.catalog({}, collections={FIELD_NOTES: {'name': 'Field Notes', 'members': ['AAAAAAAAAAA']}})
+        self.output.write_text('saved index')
+        self.output.chmod(0o640)
+        before = snapshot(self.root)
+        before.pop('.')  # Creating and removing a staging file changes the root mtime.
+        with patch.object(indexer.os, 'replace', side_effect=PermissionError('synthetic failure')) as replace:
+            with self.assertRaisesRegex(PermissionError, 'synthetic failure'):
+                self.run_index()
+        replace.assert_called_once()
+        after = snapshot(self.root)
+        after.pop('.')
+        self.assertEqual(after, before)
+        self.assert_no_staging_files()
 
     def test_generated_search_matches_individual_tags_and_existing_fields(self):
         self.bookmark('tagged.html', metadata={'title': 'TitleNeedle', 'uploader': 'ChannelNeedle',
@@ -762,22 +1081,24 @@ console.log(JSON.stringify(results));
     def test_catalog_is_loaded_and_read_once(self):
         self.bookmark()
         self.bookmark('another.html', 'BBBBBBBBBBB')
-        catalog = self.catalog({'AAAAAAAAAAA': {'tags': ['topic']}})
+        catalog = self.catalog({'AAAAAAAAAAA': {'tags': ['topic']}}, collections={
+            FIELD_NOTES: {'name': 'Field Notes', 'members': ['AAAAAAAAAAA']},
+        })
         read_text = Path.read_text
         reads = []
         def read(path, *args, **kwargs):
             if path == catalog: reads.append(path)
             return read_text(path, *args, **kwargs)
-        with patch.object(indexer, 'load_catalog_tags', wraps=indexer.load_catalog_tags) as loader, \
+        with patch.object(indexer, 'load', wraps=indexer.load) as loader, \
                 patch.object(Path, 'read_text', read):
             self.assertEqual(self.run_index()[0], 0)
-        loader.assert_called_once_with(self.root)
+        loader.assert_called_once_with(catalog)
         self.assertEqual(reads, [catalog])
 
     def test_helper_import_does_not_execute_lookup_cli(self):
         self.catalog({'AAAAAAAAAAA': {'tags': ['topic']}})
         with patch('argparse.ArgumentParser.parse_args', side_effect=AssertionError('CLI invoked during import')):
-            self.assertEqual(indexer.load_catalog_tags(self.root), {'AAAAAAAAAAA': ['topic']})
+            self.assertEqual(indexer.load_index_catalog(self.root), ({'AAAAAAAAAAA': ['topic']}, []))
 
     def assert_catalog_refused(self):
         self.output.write_bytes(b'preserve existing index\n')

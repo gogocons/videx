@@ -6,7 +6,7 @@
 
 This document is the authoritative development status, roadmap, and outstanding-work register. Keep it current when capabilities or decisions change; GitHub Issues may supplement it, but are not required to understand or continue development. Usage contracts belong in [Usage](USAGE.md), [Batch import](BATCH_IMPORT.md), [Safety](SAFETY.md), and [Data formats](DATA_FORMATS.md), rather than separate overlapping roadmaps.
 
-The latest recorded release snapshot is **v0.4.0**. The current source also implements exact personal-tag filtering, TXT and public YouTube playlist importing, and the unified `videx` command with local index opening. Manual Collection management is implemented. Offline Collection browsing and optional playlist-to-Collection creation are planned.
+The latest recorded release snapshot is **v0.4.0**. The current source also implements exact personal-tag filtering, TXT and public YouTube playlist importing, the unified `videx` command with local index opening, manual Collection management, and offline Collection browsing. Optional playlist-to-Collection creation is planned.
 
 | Completed milestone | Current capability and evidence |
 |---|---|
@@ -18,6 +18,7 @@ The latest recorded release snapshot is **v0.4.0**. The current source also impl
 | Direct public playlist import (after release snapshot) | Full flat yt-dlp discovery before capture, conservative completeness refusal, ordered deduplication, and the shared batch pipeline; `tests/test_playlist_import.py`. No Collection assignment or playlist synchronization. |
 | Unified command and offline index opening (after release snapshot) | `./videx open` opens the saved index through the desktop's HTML association. Six existing workflows are available through direct delegation. Coverage in `tests/test_bookmark_open.py`, `tests/test_videx_cli.py`, and the importer interruption tests. |
 | Collections Milestone 1 (after release snapshot) | `./videx collection` manages local Collection records with preview/apply and shared catalog backups. Coverage in `tests/test_bookmark_collection.py` and the tag, capture, and dispatcher regressions. |
+| Collections Milestone 2 (after release snapshot) | The generated index browses Collections with the shared grid, search, filters, and sort controls. Snapshot projection and generated JavaScript are covered in `tests/test_bookmark_index.py`. |
 
 These milestones describe implementation and offline regression coverage, not live YouTube or cross-platform certification. See [recorded validation](#testing-and-recorded-runtime-validation) and [known limitations](#known-issues-and-limitations).
 
@@ -62,7 +63,7 @@ videx/
 - `yt-bookmark-collection.py` manages local groups and reuses the strict catalog inventory checks.
 - `yt-bookmark-generate.py` renders standalone HTML from explicit metadata, thumbnail, and output paths; `--back-link` accepts a relative index path.
 - `yt-bookmark-metadata.py` curates schema 2 metadata; it is an imported helper rather than a CLI.
-- `yt-bookmark-index.py` builds offline search, a unified Channel/Personal Tag Filters panel, sorting, tag badges, and hidden exclusion.
+- `yt-bookmark-index.py` builds offline search, a Filters panel for Collection, Channel, and Personal Tag selection, sorting, tag badges, and hidden exclusion.
 - `yt-bookmark-upgrade.py` regenerates saved pages offline using their embedded metadata and thumbnail.
 - `videx_catalog.py` loads and atomically publishes schema-1 catalogs. Collection record validation is opt-in.
 - `videx_config.py` resolves the configured/default library; its direct script entry point prints that path.
@@ -178,7 +179,7 @@ The following objectives have no assigned release or delivery date. Proposed pri
 
 1. **Qualify Linux and supported runtimes.** Run the offline suite and representative synthetic capture, lookup, tag, and index workflows on a real Linux environment. Record distribution, Python/Bash versions, optional dependencies, failures and skips. The historical macOS results do not establish a minimum supported Python version. Track reproducible portability defects separately; a broad CI matrix or new dependencies are not assumed.
 2. **Decide the upgrade partial-result contract.** Current mixed valid/skipped runs can return `0`; no candidates with skipped pages returns `1`. [Safety](SAFETY.md#offline-upgrades) records the exact behavior. Decide whether to retain it for compatibility or change it before calling it a defect. Any later change needs caller/compatibility review, all-valid, mixed, all-skipped and operational-error tests in preview and apply modes, and migration guidance. Preserve backups and preview defaults.
-3. **Deliver Collections in stages.** Manual catalog operations precede offline index browsing and optional playlist-to-Collection creation. No release is assigned.
+3. **Deliver Collections in stages.** Manual catalog operations and offline index browsing are implemented. Optional playlist-to-Collection creation remains planned. No release is assigned.
 
 ### Collections milestones
 
@@ -186,11 +187,11 @@ The following objectives have no assigned release or delivery date. Proposed pri
 
 **Ordering decision.** Custom ordering is deferred. The member array preserves first-occurrence append order and the relative order of surviving members. Future playlist proposals preserve source sequence internally. Array order is a storage property. The initial milestones include no manual reorder command, positioning, drag-and-drop, or Collection-specific sort mode.
 
-**Milestone 2 — Offline index browsing (planned).** Add a visible Collection selector with All Bookmarks as the default. Reuse the card grid and show the selected Collection's name, optional description, and visible member count. Intersect membership with Search, Channel, and Personal Tag. Clear Filters preserves the selected Collection. Library-wide statistics, channel options, and Single Entries grouping continue to use the whole visible library.
+**Milestone 2 — Offline index browsing (implemented).** The Collection selector is the first control in the Filters panel when the snapshot includes Collections. The panel starts closed and the browsing context starts at All Bookmarks. The existing card grid shows visible members. The selected Collection's name, optional description, and visible member count stay visible when the panel closes. Membership intersects with Search, Channel, and Personal Tag. Clear Filters preserves the selected Collection. Library-wide statistics, filter options, and Single Entries grouping continue to use the whole visible library. See [Browse Collections](USAGE.md#browse-collections).
 
-Use one catalog read and project membership onto visible, successfully indexed bookmarks. Omit missing, skipped, and ambiguous identities. Track resolved duplicates before presentation validation so a single renderable copy does not select an ambiguous ID. Exclude hidden membership IDs and hidden-derived counts from the payload. Keep zero-member Collections selectable and distinguish no visible members from a search or filter with no matches. Render user text safely, preserve strict JSON serialization and atomic index publication, and retain the prior index on Collection validation failure. Keep the existing all-hidden and zero-valid-bookmark status rules. Changes appear after a successful offline rebuild.
+The index reads the catalog once and projects membership onto visible, successfully indexed bookmarks. It omits missing, skipped, and ambiguous identities. It tracks duplicates before presentation validation, so a skipped copy still makes a resolved duplicate ID ambiguous. The payload contains only visible membership IDs and the browser derives totals from those IDs. Zero-member Collections remain selectable with a distinct empty state. Collection text uses escaped, strict JSON and plain-text rendering. Catalog validation runs before atomic publication, retaining the prior index on validation failure. The all-hidden and zero-valid-bookmark status rules still apply. Changes appear after a successful offline rebuild.
 
-All Bookmarks and Collections share the existing sorting system and retain the active sort when browsing context changes. In Milestone 2, standardize the displayed labels to **Newest**, **Oldest**, **Title A-Z**, **Title Z-A**, and **Channel A-Z**. The shorter Newest and Oldest labels still sort by upload date. Preserve internal sort identifiers, the default selection, and all sorting algorithms and behavior. Update usage and index regressions when these labels ship.
+All Bookmarks and Collections share **Newest**, **Oldest**, **Title A-Z**, **Title Z-A**, and **Channel A-Z** and retain the active sort when browsing context changes. Newest remains the default. The shorter Newest and Oldest labels still sort by upload date. Internal sort identifiers, algorithms, and tie-breaking behavior are unchanged.
 
 **Milestone 3 — Optional playlist-to-Collection creation (planned).** Use a completed import report to propose a Collection name, description, and confirmed local members in playlist sequence. Import preview may show candidates and distinguish existing bookmarks from those awaiting capture. Reuse existing bookmarks and successfully captured bookmarks. Users can accept, edit, or skip the proposal and apply it separately after the final outcomes are known. Support offline review and apply. Identify omitted or unavailable entries and require explicit acceptance of any reduced membership after a completed import with per-entry failures. If no member is eligible, skip the proposal and leave empty creation to the manual command. A refused or interrupted discovery supplies no eligible proposal. A capture interruption preserves completed bookmarks, and Collection apply requires a completed import report.
 
@@ -229,7 +230,7 @@ The nine-item backlog prepared against v0.3.0 has been checked against current s
 | Define upgrade skipped-file statuses | Current behavior is documented; a decision on changing the contract remains open. |
 | Exclude `hidden` from index | Completed: all bookmark-specific index data, choices, grouping and counts exclude hidden IDs; all-hidden valid libraries publish an empty index. Files/catalog/CLI reports remain unchanged. Index regressions cover these distinctions. |
 | Add personal-tag filtering | Completed: free-text search includes tags; exact single-tag filtering combines with channel/search using AND. Earlier open search-scope questions are resolved by current implementation. |
-| Add Collections in stages | Manual management is implemented. Offline index browsing and optional playlist creation are planned. |
+| Add Collections in stages | Manual management and offline index browsing are implemented. Optional playlist-to-Collection creation is planned. |
 | Add playlist ingestion | Completed via the public-playlist importer. Continuation, overall statuses and retry/interruption behavior are documented in [Batch import](BATCH_IMPORT.md#reports-and-recovery); single capture still uses `--no-playlist`. Playlist-to-Collection work remains planned. |
 | Investigate catalog concurrency | Retained as a deferred investigation, with no new locking or transaction requirement approved. |
 

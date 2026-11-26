@@ -159,6 +159,14 @@ class CollectionTests(unittest.TestCase):
                          {key: value for key, value in original.items() if key.startswith('bookmarks')})
 
     def test_stale_members_restore_and_survive_tag_pruning(self):
+        index = self.root / 'index.html'
+
+        def indexed_members():
+            self.dispatch('index', str(self.root))
+            html = index.read_text(encoding='utf-8')
+            payload = html.split('<script id="bookmark-data" type="application/json">', 1)[1]
+            return json.loads(payload.split('</script>', 1)[0])['collections']
+
         catalog = self.seed([A, B])
         catalog['bookmarks'] = {A: {'tags': ['keep']}, B: {'tags': ['old']}}
         self.catalog.write_text(json.dumps(catalog), encoding='utf-8')
@@ -168,13 +176,16 @@ class CollectionTests(unittest.TestCase):
         self.dispatch('tag', str(self.root), 'prune', '--apply')
         self.assertEqual(self.saved()['collections'], catalog['collections'])
         self.assertNotIn(B, self.saved()['bookmarks'])
+        self.assertEqual(indexed_members(), [{'id': SAVED_ID, 'name': 'Saved', 'members': [A]}])
         path = self.video(B, 'Restored under another name.html')
         self.assertEqual(self.invoke('show', 'Saved')['member_findings'][1]['paths'], [str(path)])
+        self.assertEqual(indexed_members(), [{'id': SAVED_ID, 'name': 'Saved', 'members': [A, B]}])
+        before = index.read_bytes()
         path.unlink()
         self.invoke('remove', '--apply', 'Saved', B)
         self.assertEqual(self.saved()['collections'][SAVED_ID]['members'], [A])
-        self.dispatch('index', str(self.root))
-        self.assertNotIn('Saved', (self.root / 'index.html').read_text(encoding='utf-8'))
+        self.assertEqual(index.read_bytes(), before)
+        self.assertEqual(indexed_members(), [{'id': SAVED_ID, 'name': 'Saved', 'members': [A]}])
         output = self.dispatch('find', str(self.root), '--id', A, '--show-tags', '--json')
         self.assertEqual(json.loads(output)['bookmarks'][0]['tags'], ['keep'])
 

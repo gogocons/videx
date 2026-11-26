@@ -2,6 +2,7 @@
 """Generate a standalone, offline index.html for yt-bookmark HTML archives."""
 import argparse
 import base64
+from collections import Counter
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from importlib.util import module_from_spec, spec_from_file_location
@@ -14,6 +15,7 @@ import secrets
 import stat
 import sys
 from urllib.parse import quote
+from videx_catalog import load, unique_tags, validate_collections
 from videx_config import default_library
 from videx_identity import loads_metadata, resolve_identity
 from videx_inventory import read_bookmark_text, scan_bookmarks
@@ -80,10 +82,8 @@ def thumbnail_preview(data_uri, width):
         return data_uri
 
 
-def parse_bookmark(path, root, width, library_root):
+def parse_bookmark(path, source, video_id, width, library_root):
     parser = BookmarkParser()
-    source = read_bookmark_text(path)
-    video_id = resolve_identity(path.name, source)
     parser.feed(source)
     if not parser.metadata_chunks:
         raise ValueError('no embedded youtube-metadata JSON')
@@ -124,9 +124,13 @@ HTML_TEMPLATE = r'''<!DOCTYPE html>
 header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:25px}
 h1{font-size:clamp(1.5rem,3vw,2.2rem);margin:0;letter-spacing:-.035em}.brand{display:flex;align-items:center;gap:12px}.play{display:inline-flex;align-items:center;justify-content:center;width:39px;height:39px;background:#d93636;color:white;border-radius:10px;font-weight:900;font-size:1.1rem;flex-shrink:0}
 .sub,.muted{color:#9ca5b5}.sub{font-size:.9rem;margin-top:5px}.stats{font-size:.88rem;color:#cbd2df}
+.collection-picker{max-width:26rem;margin-bottom:14px}
+.collection-summary{margin:0 0 17px;overflow-wrap:anywhere;white-space:pre-wrap}
+.collection-summary h2{font-size:1.2rem;margin:0}.collection-summary p{margin:5px 0 0}
 .toolbar{display:grid;grid-template-columns:minmax(200px,1fr) auto minmax(145px,200px);gap:12px;margin-bottom:17px}
 input,select,button{min-width:0;background:#1d222c;color:#f3f5fa;border:1px solid #343b49;border-radius:10px;padding:13px 14px;font:inherit;outline-offset:3px}
 input,select{width:100%}button{cursor:pointer}input:focus,select:focus,button:focus-visible{border-color:#90a9e8}
+#filters:focus-visible{outline:2px solid #90a9e8}
 [hidden]{display:none!important}.filter-panel{background:#171b23;border:1px solid #343b49;border-radius:12px;padding:16px;margin-bottom:14px}
 .filter-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:14px}
 .filter-field{min-width:0}.filter-field label{display:block;margin-bottom:7px}.filter-panel button{margin-top:14px}
@@ -146,12 +150,17 @@ a{color:inherit}.title a{text-decoration:none}.title a:hover{text-decoration:und
 </head>
 <body><main>
 <header><div class="brand"><span class="play" aria-hidden="true">▶</span><div><h1>Videx</h1><div class="sub">Your offline video reference library</div></div></div><div class="stats" id="stats"></div></header>
+<section id="collection-summary" class="collection-summary" aria-labelledby="collection-name" hidden><h2 id="collection-name"></h2><p id="collection-description" class="muted" hidden></p></section>
 <div class="toolbar">
 <input id="search" type="search" placeholder="Search titles, channels, descriptions, personal tags…" aria-label="Search bookmarks" autocomplete="off">
 <button id="filters" type="button" aria-expanded="false" aria-controls="filter-panel">Filters</button>
-<select id="sort" aria-label="Sort bookmarks"><option value="upload-desc">Newest upload</option><option value="upload-asc">Oldest upload</option><option value="title-asc">Title A–Z</option><option value="title-desc">Title Z–A</option><option value="channel-asc">Channel A–Z</option></select>
+<select id="sort" aria-label="Sort bookmarks"><option value="upload-desc">Newest</option><option value="upload-asc">Oldest</option><option value="title-asc">Title A-Z</option><option value="title-desc">Title Z-A</option><option value="channel-asc">Channel A-Z</option></select>
 </div>
 <section id="filter-panel" class="filter-panel" aria-label="Filters" hidden>
+<div class="filter-field collection-picker" id="collection-picker" hidden>
+<label for="collection">Collection</label>
+<select id="collection"><option value="">All Bookmarks</option><optgroup id="collection-options" label="Collections"></optgroup></select>
+</div>
 <div class="filter-fields">
 <div class="filter-field"><label for="channel">Channel</label><select id="channel"><option value="">All Channels</option></select></div>
 <div class="filter-field"><label for="personal-tag">Personal Tag</label><select id="personal-tag"><option value="">All Personal Tags</option></select></div>
@@ -168,15 +177,30 @@ const data=JSON.parse(document.getElementById('bookmark-data').textContent);
 const items=data.items;
 const search=document.getElementById('search'),channel=document.getElementById('channel'),sort=document.getElementById('sort'),grid=document.getElementById('grid'),count=document.getElementById('count'),empty=document.getElementById('empty');
 const filters=document.getElementById('filters'),panel=document.getElementById('filter-panel'),personalTag=document.getElementById('personal-tag'),chips=document.getElementById('filter-chips');
+const collectionPicker=document.getElementById('collection-picker');
+const collection=document.getElementById('collection'),collectionOptions=document.getElementById('collection-options');
+const collectionSummary=document.getElementById('collection-summary'),collectionName=document.getElementById('collection-name'),collectionDescription=document.getElementById('collection-description');
+const collections=new Map();
+for(const entry of data.collections){
+    collections.set(entry.id,{...entry,members:new Set(entry.members)});
+    const opt=node('option','',entry.name);
+    opt.value=entry.id;collectionOptions.append(opt);
+}
+if(collections.size)collectionPicker.hidden=false;
+else collectionPicker.remove();
 const tagLabels=new Map(data.personalTagOptions.map(tag=>[tag.key,tag.label]));
 for(const tag of data.personalTagOptions){
     const opt=document.createElement('option');
     opt.value=tag.key;opt.textContent=tag.label;personalTag.append(opt);
 }
-function setPanelOpen(open){panel.hidden=!open;filters.setAttribute('aria-expanded',String(open))}
+function setPanelOpen(open){
+    panel.hidden=!open;
+    filters.setAttribute('aria-expanded',String(open));
+    if(!open)filters.focus();
+}
 filters.addEventListener('click',()=>setPanelOpen(panel.hidden));
 document.addEventListener('keydown',event=>{
-    if(event.key==='Escape'&&!panel.hidden){event.preventDefault();setPanelOpen(false);filters.focus()}
+    if(event.key==='Escape'&&!panel.hidden){event.preventDefault();setPanelOpen(false)}
 });
 document.getElementById('clear-filters').addEventListener('click',()=>{
     channel.value='';personalTag.value='';render();
@@ -247,8 +271,15 @@ const actions=node('div','actions');actions.append(link('Open bookmark',x.href))
 function render() {
     const q = search.value.trim().toLocaleLowerCase();
     const c = channel.value;
+    const selected = collections.get(collection.value);
+    const total = selected ? selected.members.size : items.length;
+    collectionSummary.hidden = !selected;
+    collectionName.textContent = selected ? selected.name : '';
+    collectionDescription.textContent = selected?.description || '';
+    collectionDescription.hidden = !selected?.description;
 
     let matches = items.filter(x => {
+        if (selected && !selected.members.has(x.id)) return false;
         const channelMatch =
             !c ||
             (c === '__single_entries__'
@@ -267,8 +298,15 @@ function render() {
 
     const s = sort.value;
 matches.sort((a,b)=>{switch(s){case 'upload-desc':return b.uploadDate.localeCompare(a.uploadDate);case 'upload-asc':return a.uploadDate.localeCompare(b.uploadDate);case 'title-asc':return a.title.localeCompare(b.title);case 'title-desc':return b.title.localeCompare(a.title);case 'channel-asc':return a.channel.localeCompare(b.channel);default:return b.uploadDate.localeCompare(a.uploadDate)}});
-count.textContent=`Showing ${matches.length.toLocaleString()} of ${items.length.toLocaleString()} bookmarks`;empty.hidden=matches.length!==0;grid.replaceChildren();const fragment=document.createDocumentFragment();for(const item of matches)fragment.append(makeCard(item));grid.append(fragment);renderFilters()}
-search.addEventListener('input',render);channel.addEventListener('change',render);personalTag.addEventListener('change',render);sort.addEventListener('change',render);render();
+    count.textContent=`Showing ${matches.length.toLocaleString()} of ${total.toLocaleString()} bookmarks`;
+    empty.textContent=selected && total===0 ? 'This Collection has no visible bookmarks.' : 'No matching bookmarks found.';
+    empty.hidden=matches.length!==0;
+    grid.replaceChildren();
+    const fragment=document.createDocumentFragment();
+    for(const item of matches)fragment.append(makeCard(item));
+    grid.append(fragment);renderFilters();
+}
+search.addEventListener('input',render);channel.addEventListener('change',render);personalTag.addEventListener('change',render);sort.addEventListener('change',render);collection.addEventListener('change',render);render();
 })();
 </script></body></html>'''
 
@@ -312,13 +350,38 @@ def write_index_atomic(output, content):
         raise
 
 
-def load_catalog_tags(library_root):
-    """Reuse lookup's read-only catalog validation and normalization once per build."""
-    spec = spec_from_file_location('bookmark_find', Path(__file__).with_name('yt-bookmark-find.py'))
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _, tags = module.catalog_tags(library_root)
-    return tags
+def load_index_catalog(library_root):
+    catalog = load(library_root / 'catalog.json')
+    collections = catalog['collections']
+    names = validate_collections(collections)
+    tags = {vid: unique_tags(record.get('tags', []))
+            for vid, record in catalog['bookmarks'].items()}
+    return tags, [(identity, collections[identity]) for _, identity in sorted(names.items())]
+
+
+def visible_collections(collections, items, identity_counts, tags):
+    visible_ids = {item['id'] for item in items if identity_counts[item['id']] == 1}
+    reported = set()
+    result = []
+    for identity, record in collections:
+        members = []
+        for vid in record['members']:
+            if vid in visible_ids:
+                members.append(vid)
+            elif vid not in reported and 'hidden' not in tags.get(vid, []):
+                if identity_counts[vid] > 1:
+                    reason = 'ambiguous bookmark identity'
+                elif identity_counts[vid] == 1:
+                    reason = 'bookmark skipped during indexing'
+                else:
+                    reason = 'no resolved bookmark'
+                print(f'  Omitting Collection member {vid}: {reason}', file=sys.stderr)
+                reported.add(vid)
+        entry = {'id': identity, 'name': record['name'], 'members': members}
+        if 'description' in record:
+            entry['description'] = record['description']
+        result.append(entry)
+    return result
 
 
 def main():
@@ -361,9 +424,9 @@ def main():
     if args.thumbnail_width < 64 or args.thumbnail_width > 1920:
         parser.error('--thumbnail-width must be between 64 and 1920')
     try:
-        tags_by_id = load_catalog_tags(library_root)
-    except (OSError, ValueError) as exc:
-        print(f'ERROR: Cannot load personal tags; existing index left untouched: {exc}', file=sys.stderr)
+        tags_by_id, collections = load_index_catalog(library_root)
+    except (OSError, ValueError, RecursionError) as exc:
+        print(f'ERROR: Cannot load personal tags or Collections; existing index left untouched: {exc}', file=sys.stderr)
         return 2
     if Image is None:
         print('Note: Pillow not installed; original full-size thumbnails will be embedded. Install Pillow for smaller index files.', file=sys.stderr)
@@ -374,11 +437,16 @@ def main():
         return 2
     print(f'Scanning {len(paths)} HTML files in {root}', flush=True)
     items = []
+    identity_counts = Counter()
     valid_count = 0
     skipped = 0
     for path in paths:
         try:
-            item = parse_bookmark(path, root, args.thumbnail_width, library_root)
+            source = read_bookmark_text(path)
+            video_id = resolve_identity(path.name, source)
+            # A second resolved copy is ambiguous even if its card cannot render.
+            identity_counts[video_id] += 1
+            item = parse_bookmark(path, source, video_id, args.thumbnail_width, library_root)
             item['personalTags'] = tags_by_id.get(item['id'], [])
             valid_count += 1
             if 'hidden' in item['personalTags']:
@@ -402,9 +470,11 @@ def main():
         for tag, key in zip(item['personalTags'], item['personalTagKeys']):
             tag_labels.setdefault(key, tag)
     tag_options = [{'key': key, 'label': tag_labels[key]} for key in sorted(tag_labels)]
+    collection_options = visible_collections(collections, items, identity_counts, tags_by_id)
     try:
         payload = json.dumps({'generatedAt': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
-                              'items': items, 'personalTagOptions': tag_options},
+                              'items': items, 'personalTagOptions': tag_options,
+                              'collections': collection_options},
                              ensure_ascii=False, separators=(',', ':'), allow_nan=False)
     except (TypeError, ValueError, OverflowError) as exc:
         print(f'ERROR: Cannot serialize index JSON: {exc}; existing index left untouched.', file=sys.stderr)

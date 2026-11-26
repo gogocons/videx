@@ -23,9 +23,10 @@ current screenshots. These screenshots are not pixel-exact current UI tests.
    agent. In the page's Web Console, verify
    `[window.innerWidth, window.innerHeight, window.devicePixelRatio]` returns
    `[1440, 900, 2]`. RDM preview scaling is separate from page zoom.
-4. Use the page's dark presentation. Reset scroll to the top, clear search,
-   select **All Channels**, **All Personal Tags**, and **Newest upload** for the
-   library overview, then close Filters.
+4. Use the page's dark presentation. Reset scroll to the top and clear search.
+   Open **Filters** and select **All Bookmarks** if the Collection selector is
+   present. Select **All Channels** and **All Personal Tags**, then close Filters
+   and set the sort to **Newest**.
    Wait for thumbnails and fonts to render. Move the pointer away from cards so
    hover scaling is inactive; avoid focused controls and open menus.
 5. Use RDM's screenshot control to capture **viewport page content only**.

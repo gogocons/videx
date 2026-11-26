@@ -83,6 +83,8 @@ Names use Unicode whitespace trimming and NFC normalization. After normalization
 
 Members are distinct canonical case-sensitive video IDs. A bookmark may be in several Collections and needs no personal tag record. New members append in first-occurrence input order and removals preserve the surviving order. Empty arrays are valid. This order is a storage property. Existing schema-1 tag writers that round-trip the whole catalog preserve valid Collection records, including during tag pruning.
 
+The generated index contains a read-only projection of each Collection's ID, name, optional description, and visible member IDs. Cards are stored once in the index's general bookmark data and shared across browsing contexts. A member must resolve to exactly one bookmark identity before presentation validation and pass normal indexing and visibility checks. The index derives visible member totals from the projected IDs. CLI reports still use stored membership. See [index publication and statuses](SAFETY.md#index-publication-and-statuses).
+
 ### Collection JSON report version 1
 
 `collection OPERATION --json` emits one object with `report_version`, `operation`, `library` (absolute path or null), `catalog.status` (`present`, `missing`, `unavailable`, or `not_read`), `mode` (`read`, `preview`, or `apply`), `result`, `issues`, and `exit_status`. Result values are `ok`, `partial`, `would_change`, `applied`, `no_change`, `refused`, and `interrupted`. Issues contain a category and message and may carry relevant paths or IDs.
