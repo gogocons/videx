@@ -41,7 +41,8 @@ class ArchiveParser(HTMLParser):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__,
-        epilog='Bookmark symlinks and special files are not read. Filesystem validation failures return 2 before backups or replacements; malformed regular pages are skipped.')
+        epilog='After applying, run ./videx index separately to update the library index. '
+               'Bookmark symlinks and special files are not read. Filesystem validation failures return 2 before backups or replacements; malformed regular pages are skipped.')
     p.add_argument('directory', nargs='?', default=None,
                    help='Library root or bookmark directory (default: configured library)')
     p.add_argument('--apply', action='store_true', help='Back up and replace pages; default is dry-run')

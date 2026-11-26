@@ -25,7 +25,7 @@ Options:
   -h, --help        Show this help
 
 An existing video ID is skipped by default, even if its title has changed.
-The index is not rebuilt unless --re-index is specified.
+Use --re-index to rebuild during capture, or run ./videx index separately.
 Requested tags and the catalog are validated before capture. Tags on new
 bookmarks are applied automatically; existing-bookmark tags require --apply.
 --tag consumes its next argument literally, even --apply or --help. A tag

@@ -4,6 +4,8 @@ usage() {
   cat <<'EOF'
 Usage: ./videx COMMAND [ARGUMENTS ...]
 
+Save and organize YouTube bookmarks in a searchable offline library.
+
   open        Open the existing library index
   capture     Save or refresh a video bookmark
   import      Preview or apply a TXT or public playlist import
@@ -14,6 +16,11 @@ Usage: ./videx COMMAND [ARGUMENTS ...]
   upgrade     Preview or apply offline bookmark upgrades
 
 Run ./videx COMMAND --help for command options.
+Commands use the library in config.local.json, or the Videx project directory
+if the file is absent. See each command's help for its library override.
+
+To turn a playlist into a Collection, see ./videx import --help for the
+full workflow and ./videx collection from-import --help for review and apply.
 EOF
 }
 

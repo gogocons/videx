@@ -196,7 +196,7 @@ def main():
         epilog='Bookmark symlinks and special files are not read. Incomplete inventories prevent lookup; audit reports the issues.')
     p.add_argument("library", type=Path, nargs="?", help="Library root (default: configured library)")
     group = p.add_mutually_exclusive_group(required=True)
-    group.add_argument("--url")
+    group.add_argument("--url", help="Look up a bookmark by its YouTube video URL")
     group.add_argument("--id", help="Video ID; use --id=VALUE for leading-hyphen IDs (capture uses --id VALUE)")
     group.add_argument("--audit", action="store_true", help="Audit all bookmarks for duplicates and ID inconsistencies")
     p.add_argument('--show-tags', action='store_true', help='Report personal tags from the selected library catalog')

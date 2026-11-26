@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview or apply YouTube bookmarks from TXT or a public playlist."""
+"""Preview or apply a bookmark import from a text file or public YouTube playlist."""
 import argparse
 from collections import Counter
 from importlib.util import module_from_spec, spec_from_file_location
@@ -415,17 +415,46 @@ def emit(report, as_json):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=r"""Choose exactly one source. The default library comes from config.local.json,
+or the Videx project directory if the file is absent.
+
+Examples for the default library
+  ./videx import --file urls.txt
+
+Playlist to Collection
+  Replace PLAYLIST_URL with a public YouTube playlist URL. Videx does not
+  automatically save a report file. Use > to save the JSON for later use.
+  After import, the remaining steps work offline. Review the Collection
+  preview before applying, then rebuild the index to include the Collection.
+
+  ./videx import --playlist "PLAYLIST_URL" --propose-collection \
+    --apply --no-re-index --json > playlist-import.json
+
+  ./videx collection from-import playlist-import.json
+
+  ./videx collection from-import playlist-import.json --apply
+
+  ./videx index
+  ./videx open
+
+  Add --output DIR to import into a different library root. Use the same
+  library for the remaining commands. For library and metadata overrides or
+  partial membership, see ./videx collection from-import --help.""",
+    )
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('--file', type=Path, help='UTF-8 TXT input')
+    source.add_argument('--file', type=Path, help='UTF-8 text file with one video URL or ID per line')
     source.add_argument('--playlist', help='Public YouTube playlist URL (discovery requires network)')
-    parser.add_argument('--output', type=Path, help='Library root (default: configured library)')
+    parser.add_argument('--output', type=Path, metavar='DIR', help='Override the default library root')
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument('--apply', action='store_true', help='Create missing bookmarks')
+    mode.add_argument('--apply', action='store_true', help='Create missing bookmarks and rebuild the index if any were created')
     mode.add_argument('--dry-run', action='store_true', help='Read-only preview (default)')
-    parser.add_argument('--no-re-index', action='store_true', help='Suppress final index rebuild')
-    parser.add_argument('--propose-collection', action='store_true', help='Include a playlist Collection proposal')
-    parser.add_argument('--json', action='store_true', help='Print one JSON report')
+    parser.add_argument('--no-re-index', action='store_true', help='Skip the final index rebuild on apply')
+    parser.add_argument('--propose-collection', action='store_true',
+                        help='Include Collection proposal information in the import report (requires --playlist)')
+    parser.add_argument('--json', action='store_true', help='Write the JSON import report to standard output')
     args = parser.parse_args(argv)
     if args.propose_collection and args.playlist is None:
         parser.error('--propose-collection requires --playlist')

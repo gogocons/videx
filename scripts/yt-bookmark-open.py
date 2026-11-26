@@ -28,8 +28,11 @@ def check_index(index):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='videx open', description=__doc__, allow_abbrev=False)
-    parser.add_argument('--library', metavar='DIR', help='Library root (default: configured library)')
+    parser = argparse.ArgumentParser(prog='videx open', description=__doc__, allow_abbrev=False,
+                                     epilog='To create or refresh the index first, run ./videx index '
+                                            '(or ./videx index DIR for an explicit library).')
+    parser.add_argument('--library', metavar='DIR',
+                        help='Library root (default: config.local.json library, or Videx project directory)')
     args = parser.parse_args(argv)
     try:
         if args.library == '':

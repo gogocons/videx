@@ -85,6 +85,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
         usage='%(prog)s [LIBRARY] OPERATION [VALUES ...] [--apply]',
         epilog='Start with OPERATION to use the configured default library. Changes are previews unless --apply is supplied. '
+               'After applying, run ./videx index separately to update the library index. '
                'For hyphen-prefixed IDs or tags, use: [--apply] -- LIBRARY OPERATION VALUES ... . '
                'All values after -- are literal; put the write option before --. '
                'Bookmark symlinks and special files are not read. Mutations require a complete inventory. '

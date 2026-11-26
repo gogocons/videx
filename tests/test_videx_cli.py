@@ -73,14 +73,33 @@ class DispatchTests(unittest.TestCase):
                     self.assertEqual(forwarded, [*args, ''])
 
     def test_help_is_identical_to_direct_commands(self):
-        for command in ROUTES:
-            with self.subTest(command=command):
+        commands = [(route,) for route in ('open', *ROUTES)]
+        commands.append(('collection', 'from-import'))
+        for command, *operation in commands:
+            with self.subTest(command=command, operation=operation):
                 direct = (['bash', batch.SCRIPTS / 'yt-bookmark.sh'] if command == 'capture'
                           else ['python3', '-B', batch.SCRIPTS / f'yt-bookmark-{command}.py'])
-                expected = self.run_command([*direct, '--help'])
-                result = self.run_command([VIDEX, command, '--help'])
+                expected = self.run_command([*direct, *operation, '--help'])
+                result = self.run_command([VIDEX, command, *operation, '--help'])
                 self.assertEqual(result.returncode, 0)
                 self.assertEqual((result.stdout, result.stderr), (expected.stdout, expected.stderr))
+
+    def test_playlist_collection_workflow_is_discoverable_in_help(self):
+        expectations = {
+            (): ('./videx import --help', './videx collection from-import --help'),
+            ('import',): ('--json > playlist-import.json',
+                          './videx collection from-import playlist-import.json --apply',
+                          './videx index\n  ./videx open'),
+            ('collection',): ('./videx collection from-import --help', './videx import --help'),
+            ('collection', 'from-import'): ('./videx import --help', '--accept-partial',
+                                            '--library "/path/to/library" --name "Field Notes"'),
+        }
+        for command, snippets in expectations.items():
+            with self.subTest(command=command):
+                result = self.run_command([VIDEX, *command, '--help'])
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                for snippet in snippets:
+                    self.assertIn(snippet, result.stdout)
 
 
 class DispatchWorkflowTests(unittest.TestCase):

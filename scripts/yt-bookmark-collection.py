@@ -26,6 +26,32 @@ spec.loader.exec_module(tagger)
 READ_OPERATIONS = {'list', 'show'}
 CREATION_OPERATIONS = {'create', 'from-import'}
 
+FROM_IMPORT_HELP = r"""Use a report from a completed import run with --playlist, --apply,
+--propose-collection, and --json. See ./videx import --help for the
+playlist workflow, including saving the report with >.
+
+Collection creation from the report works offline. Preview first, then use
+--apply to save. Applying partial membership requires --accept-partial.
+Rebuild the index separately after saving.
+
+Examples
+  ./videx collection from-import playlist-import.json
+  ./videx collection from-import playlist-import.json --apply
+  ./videx index
+  ./videx open
+
+  To override the proposed metadata and select an explicit library, preview
+  with the following command. Repeat with --apply when ready to save.
+
+  ./videx collection from-import playlist-import.json \
+    --library "/path/to/library" --name "Field Notes" \
+    --description "Videos to revisit."
+
+  Select the same library used for import with --output DIR. After applying,
+  run ./videx index DIR and ./videx open --library DIR for that library.
+
+Put options before -- to pass literal option-like arguments."""
+
 
 class Refusal(ValueError):
     def __init__(self, category, message, status=2):
@@ -36,13 +62,23 @@ class Refusal(ValueError):
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(prog='videx collection', description=__doc__,
-                                     allow_abbrev=False)
+                                     allow_abbrev=False,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter,
+                                     epilog="""Changes preview by default. Pass --apply to save them, then run
+./videx index separately to update the library index.
+
+Each operation accepts --library DIR. By default, Videx uses the library in
+config.local.json, or the Videx project directory if the file is absent.
+
+Run ./videx collection OPERATION --help for that operation's options.
+For playlist imports, see ./videx collection from-import --help and
+./videx import --help.""")
     commands = parser.add_subparsers(dest='operation', required=True)
     operations = {
         'list': 'List Collections and stored member counts',
         'show': 'Inspect a Collection and its member availability',
         'create': 'Create an empty Collection',
-        'from-import': 'Create a Collection from a completed playlist import report',
+        'from-import': 'Preview or create a Collection from a completed playlist import report',
         'rename': 'Change a Collection name',
         'describe': 'Set a description or clear it with empty text',
         'add': 'Append existing bookmarks by video ID',
@@ -50,29 +86,34 @@ def parse_args(argv):
         'delete': 'Delete a Collection record',
     }
     for operation, help_text in operations.items():
+        epilog = (FROM_IMPORT_HELP if operation == 'from-import'
+                  else 'Put options before -- to pass literal option-like arguments.')
         command = commands.add_parser(operation, help=help_text, description=help_text,
                                       allow_abbrev=False,
-                                      epilog='Put options before -- to pass literal option-like arguments.')
-        command.add_argument('--library', metavar='DIR', help='Library root (default: configured library)')
-        command.add_argument('--json', action='store_true', help='Print one JSON report')
+                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=epilog)
+        command.add_argument('--library', metavar='DIR',
+                             help='Library root (default: config.local.json library, or Videx project directory)')
+        command.add_argument('--json', action='store_true', help='Write a JSON report to standard output')
         if operation not in READ_OPERATIONS:
             command.add_argument('--apply', action='store_true', help='Save changes (default: preview)')
         if operation not in {'list', *CREATION_OPERATIONS}:
             command.add_argument('target', metavar='TARGET', help='Collection name, id:UUID, or name:TEXT')
         if operation == 'create':
-            command.add_argument('name', metavar='NAME')
+            command.add_argument('name', metavar='NAME', help='Name for the new Collection')
             command.add_argument('--description', metavar='TEXT', default='', help='Optional description')
         if operation == 'from-import':
-            command.add_argument('report', metavar='REPORT', help='JSON import report file, or - for stdin')
+            command.add_argument('report', metavar='REPORT', help='JSON import report file, or - for standard input')
             command.add_argument('--name', metavar='NAME', help='Override the proposed name')
-            command.add_argument('--description', metavar='TEXT', help='Override description; empty text clears it')
-            command.add_argument('--accept-partial', action='store_true', help='Approve the listed omissions on apply')
+            command.add_argument('--description', metavar='TEXT',
+                                 help='Override the proposed description (empty text clears it)')
+            command.add_argument('--accept-partial', action='store_true',
+                                 help='Approve omitted playlist entries (requires --apply)')
         if operation == 'rename':
-            command.add_argument('name', metavar='NEW_NAME')
+            command.add_argument('name', metavar='NEW_NAME', help='New name for the Collection')
         if operation == 'describe':
-            command.add_argument('description', metavar='TEXT')
+            command.add_argument('description', metavar='TEXT', help='New description (empty text clears it)')
         if operation in {'add', 'remove'}:
-            command.add_argument('members', metavar='VIDEO_ID', nargs='+')
+            command.add_argument('members', metavar='VIDEO_ID', nargs='+', help='One or more video IDs')
     args = parser.parse_args(argv)
     if args.operation == 'from-import' and args.accept_partial and not args.apply:
         parser.error('--accept-partial requires --apply')
