@@ -35,10 +35,10 @@ Each standalone page contains a thumbnail, description, metadata, and links to t
 - Upgrade saved bookmark pages offline, using previews and backups, and keep your library outside the source repository.
 - Import a TXT backlog or public YouTube playlist with read-only previews, duplicate checks, per-entry results, and one final index rebuild.
 
-Collections remain future work. Personal tagging, tag searching, and dedicated index tag filtering are implemented; see the [current status and roadmap](docs/DEVELOPMENT.md#current-status-and-tracking). The v0.4.0 badge identifies the recorded release snapshot; current source also includes subsequent filtering and import work.
+Collections remain future work. See the [current status and roadmap](docs/DEVELOPMENT.md#current-status-and-tracking). The v0.4.0 badge identifies the recorded release snapshot. Current source also includes subsequent tag filtering, import workflows, and the `./videx` command.
 
-Preview a TXT backlog with `python3 -B scripts/yt-bookmark-import.py --file backlog.txt`;
-or preview a public playlist with `python3 -B scripts/yt-bookmark-import.py --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'`.
+Preview a TXT backlog with `./videx import --file backlog.txt` or preview a
+public playlist with `./videx import --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'`.
 Add `--apply` to capture new bookmarks. TXT preview works offline; playlist preview
 uses the network for discovery. Neither writes to the library. See the
 [batch import format, examples, and recovery guide](docs/BATCH_IMPORT.md).
@@ -48,6 +48,7 @@ uses the network for discovery. Neither writes to the library. See the
 - **Python 3**, **Bash**, and common POSIX utilities (`find`, `sed`, `mktemp`).
 - **yt-dlp**, installed separately and available on `PATH`, for capture, refresh, and playlist discovery.
 - **Pillow**, optionally, to reduce embedded index thumbnail sizes; otherwise original thumbnails are used.
+- For `./videx open`, a graphical desktop with `open` on macOS or `xdg-open` on Linux and a default HTML application.
 - macOS or Linux; no Node.js, database, web server, or `jq` required. Linux is an intended platform; see the [recorded runtime validation](docs/DEVELOPMENT.md#testing-and-recorded-runtime-validation) for tested environments. No minimum Python version beyond Python 3 has been qualified.
 
 Install yt-dlp using its [official instructions](https://github.com/yt-dlp/yt-dlp/wiki/Installation), your package manager, or `python3 -m pip install -U yt-dlp` in a suitable Python environment. Check `yt-dlp --version`, `python3 --version`, and `bash --version`. Update yt-dlp if site changes break extraction.
@@ -74,43 +75,45 @@ This local configuration is ignored by Git. Use an absolute path or one beginnin
 View capture options, then save a bookmark and rebuild the index. Replace `AAAAAAAAAAA` with a real 11-character video ID:
 
 ```bash
-bash scripts/yt-bookmark.sh --help
-bash scripts/yt-bookmark.sh --re-index 'https://www.youtube.com/watch?v=AAAAAAAAAAA'
+./videx --help
+./videx capture --help
+./videx capture --re-index 'https://www.youtube.com/watch?v=AAAAAAAAAAA'
+./videx open
 ```
 
-Open `<library>/index.html` in your browser; no server is needed. Capture creates `bookmarks/` automatically and saves new pages under `<library>/bookmarks/<channel>/<title> [video-id].html`. The catalog is separate from embedded source metadata; rebuilding the index reads saved data without recapturing it.
+`./videx open` opens the saved `<library>/index.html` with your desktop's default HTML application. It works offline and opens the snapshot as saved. To open another library, use `./videx open --library '/path/to/library'`. To build or refresh a snapshot, run `./videx index` separately. Capture creates `bookmarks/` automatically and saves new pages under `<library>/bookmarks/<channel>/<title> [video-id].html`. The catalog is separate from embedded source metadata.
 
 ## Essential commands
 
-These examples use the configured library or project-local fallback. Tag edits require an existing bookmark with the indicated ID. Full options, explicit-path examples, and unusual argument syntax are in [Usage](docs/USAGE.md).
+These examples use the configured library or project-local fallback. Tag edits require an existing bookmark with the indicated ID. The existing direct script invocations remain supported with the same command-specific options. See [Usage](docs/USAGE.md) for explicit paths and argument syntax.
 
 ```bash
 # Capture without rebuilding the index
-bash scripts/yt-bookmark.sh 'https://youtu.be/AAAAAAAAAAA'
+./videx capture 'https://youtu.be/AAAAAAAAAAA'
 
 # Refresh an existing bookmark and rebuild the index
-bash scripts/yt-bookmark.sh --overwrite --re-index 'https://youtu.be/AAAAAAAAAAA'
+./videx capture --overwrite --re-index 'https://youtu.be/AAAAAAAAAAA'
 
 # Rebuild the index independently, offline
-python3 -B scripts/yt-bookmark-index.py
+./videx index
 
 # New bookmark: tags save automatically; existing bookmark: preview additions
-bash scripts/yt-bookmark.sh --tag Python --tag Research 'https://youtu.be/AAAAAAAAAAA'
+./videx capture --tag Python --tag Research 'https://youtu.be/AAAAAAAAAAA'
 
 # Preview, then apply personal tags to an existing bookmark
-python3 -B scripts/yt-bookmark-tag.py add AAAAAAAAAAA Python Research
-python3 -B scripts/yt-bookmark-tag.py add AAAAAAAAAAA Python Research --apply
+./videx tag add AAAAAAAAAAA Python Research
+./videx tag add AAAAAAAAAAA Python Research --apply
 
 # Inspect tag totals and audit the library without modifying it
-python3 -B scripts/yt-bookmark-tag.py report
-python3 -B scripts/yt-bookmark-find.py --audit
+./videx tag report
+./videx find --audit
 
 # Preview offline upgrades, then apply with backups
-python3 -B scripts/yt-bookmark-upgrade.py
-python3 -B scripts/yt-bookmark-upgrade.py --apply
+./videx upgrade
+./videx upgrade --apply
 
 # Rebuild after upgrades or applied tag changes
-python3 -B scripts/yt-bookmark-index.py
+./videx index
 ```
 
 The tag tool also supports removing, replacing, and renaming tags, catalog-only listing, and previewing orphan-record pruning. Audit reports duplicates, mismatches, unknown identities, and unreadable files; it does not repair them. Inspect warnings before applying maintenance operations.

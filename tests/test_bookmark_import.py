@@ -44,7 +44,7 @@ class ImportTests(unittest.TestCase):
         self.bin.mkdir()
         (self.bin / 'python3').symlink_to(sys.executable)
         stub = self.bin / 'yt-dlp'
-        stub.write_text('#!' + sys.executable + '\n' + '''import base64, json, os, pathlib, sys, time
+        stub.write_text('#!' + sys.executable + '\n' + '''import base64, json, os, pathlib, signal, sys, time
 root = pathlib.Path(os.environ['IMPORT_FIXTURE'])
 identity = sys.argv[-1].split('=')[-1]
 with (root / 'calls.jsonl').open('a') as stream:
@@ -59,6 +59,10 @@ if '--dump-single-json' in sys.argv:
     sys.exit(int(os.environ.get('PLAYLIST_EXIT', '0')))
 mode = json.loads(os.environ.get('IMPORT_MODES', '{}')).get(identity)
 if mode == 'sleep':
+    def stop(signum, frame):
+        (root / 'extractor-stopped').write_text(identity)
+        sys.exit(128 + signum)
+    signal.signal(signal.SIGTERM, stop)
     (root / 'waiting').write_text(identity)
     time.sleep(30)
 if mode == 'fail':
@@ -311,9 +315,15 @@ if mode == 'unsafe_library':
             self.assertEqual(len(indexes), 0 if suppress else 1)
 
     def test_interruption_terminates_child_and_preserves_partial_progress(self):
+        self.assert_import_interruption(self.command('--apply'))
+
+    def test_dispatcher_interruption_terminates_child_and_preserves_partial_progress(self):
+        self.assert_import_interruption([str(PROJECT / 'videx'), 'import', *self.command('--apply')[3:]])
+
+    def assert_import_interruption(self, command):
         self.source.write_text(A + '\n' + B + '\n' + C)
-        process = subprocess.Popen(self.command('--apply'), stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True,
+        process = subprocess.Popen(command, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, cwd=self.root,
             env=dict(self.env, IMPORT_MODES=json.dumps({B: 'sleep'})))
         try:
             deadline = time.monotonic() + 15
@@ -334,6 +344,8 @@ if mode == 'unsafe_library':
                          ['created', 'not_processed', 'not_processed'])
         self.assertEqual(report['index']['status'], 'rebuilt')
         self.assertEqual(len(self.calls()), 2)
+        self.assertEqual((self.root / 'extractor-stopped').read_text(), B)
+        self.assertTrue(Path(report['entries'][0]['path']).is_file())
 
     def test_human_summary_and_conflicting_modes(self):
         result = subprocess.run(self.command()[:-1], env=self.env, capture_output=True, text=True)

@@ -9,18 +9,20 @@ capture, without changing bookmark or catalog formats.
 
 ## Commands
 
+`./videx import` delegates to the existing importer. Both invocation forms accept the same arguments and retain the same preview, apply, reporting, and exit-status behavior.
+
 ```bash
 # Preview using the configured library; no network or writes
-python3 -B scripts/yt-bookmark-import.py --file backlog.txt
+./videx import --file backlog.txt
 
 # Explicit preview against a selected library
 python3 -B scripts/yt-bookmark-import.py --file backlog.txt --output '/path/to/library' --dry-run
 
 # Capture new IDs and rebuild the index once
-python3 -B scripts/yt-bookmark-import.py --file backlog.txt --apply
+./videx import --file backlog.txt --apply
 
 # Apply without rebuilding; emit one JSON report
-python3 -B scripts/yt-bookmark-import.py --file backlog.txt --apply --no-re-index --json
+./videx import --file backlog.txt --apply --no-re-index --json
 
 # Discover a public playlist and preview; network required, no library writes
 python3 -B scripts/yt-bookmark-import.py --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'

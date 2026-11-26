@@ -6,7 +6,7 @@
 
 This document is the authoritative development status, roadmap, and outstanding-work register. Keep it current when capabilities or decisions change; GitHub Issues may supplement it, but are not required to understand or continue development. Usage contracts belong in [Usage](USAGE.md), [Batch import](BATCH_IMPORT.md), [Safety](SAFETY.md), and [Data formats](DATA_FORMATS.md), rather than separate overlapping roadmaps.
 
-The latest recorded release snapshot is **v0.4.0**. The current source also implements exact personal-tag filtering, TXT batch importing, and direct public YouTube playlist importing. These additions must not be mistaken for future features or evidence of a newer published release. **Collections are planned, not implemented.** There is no Collection CLI or index presentation; the catalog's `collections` object is reserved structure only.
+The latest recorded release snapshot is **v0.4.0**. The current source also implements exact personal-tag filtering, TXT and public YouTube playlist importing, and the unified `videx` command with local index opening. These additions are part of the current source. **Collections are planned, not implemented.** There is no Collection CLI or index presentation; the catalog's `collections` object is reserved structure only.
 
 | Completed milestone | Current capability and evidence |
 |---|---|
@@ -16,6 +16,7 @@ The latest recorded release snapshot is **v0.4.0**. The current source also impl
 | Exact tag filtering (after release snapshot) | Unified Channel/Personal Tag Filters panel, chips and reset controls; one exact tag selection combines with channel and free-text search using AND. Unicode tag identity uses Python case-folding; `tests/test_bookmark_index.py`. |
 | TXT batch import (after release snapshot) | Offline preview, sequential new captures, existing-ID reuse, per-entry reports, retry by rerunning, and one default final index rebuild after creation; `tests/test_bookmark_import.py`. |
 | Direct public playlist import (after release snapshot) | Full flat yt-dlp discovery before capture, conservative completeness refusal, ordered deduplication, and the shared batch pipeline; `tests/test_playlist_import.py`. No Collection assignment or playlist synchronization. |
+| Unified command and offline index opening (after release snapshot) | `./videx open` opens the saved index through the desktop's HTML association. Six existing workflows are available through direct delegation. Coverage in `tests/test_bookmark_open.py`, `tests/test_videx_cli.py`, and the importer interruption tests. |
 
 These milestones describe implementation and offline regression coverage, not live YouTube or cross-platform certification. See [recorded validation](#testing-and-recorded-runtime-validation) and [known limitations](#known-issues-and-limitations).
 
@@ -23,13 +24,17 @@ These milestones describe implementation and offline regression coverage, not li
 
 Videx is a small suite of Bash and Python scripts. Capture uses separately installed yt-dlp to obtain metadata and a thumbnail in a temporary directory, resolves the video's identity, and renders a standalone bookmark. The generator curates metadata and embeds the thumbnail and JSON in HTML. Requested personal tags are maintained separately in the library catalog. Optional indexing reads saved bookmarks and catalog tags to produce a self-contained offline snapshot.
 
+The root `videx` executable gives users one help screen and short entry points. Its Bash 3.2-compatible dispatcher uses `exec` with the existing Bash and Python interpreters. The delegated scripts retain their own parsing, working directory, output, exit statuses, and safety rules. The Python opener reuses the shared library resolver and handles only the existing index and desktop launch. This decision supersedes the earlier unified CLI deferral. Existing script paths remain supported, and deeper implementation consolidation is deferred.
+
 The index is generated output; bookmark HTML and personal catalog data are persistent library data. Rebuilding the index does not refresh source metadata. Counts represent capture-time snapshots. Lookup, audit, tagging, index generation, and upgrades operate locally. External video/channel links need internet access.
 
 ## Source layout and responsibilities
 
 ```text
 videx/
+├── videx                       # Public dispatcher for open and existing workflows
 ├── scripts/
+│   ├── yt-bookmark-open.py       # Open the existing index through the desktop
 │   ├── yt-bookmark.sh            # Capture bookmarks and optionally rebuild the index
 │   ├── yt-bookmark-import.py     # TXT/public-playlist adapters using single-video capture
 │   ├── yt-bookmark-find.py       # Video-ID lookup and read-only library audit
@@ -59,7 +64,7 @@ videx/
 - `videx_identity.py` centralizes ID validation, metadata JSON parsing, and identity resolution.
 - `videx_inventory.py` enumerates bookmark candidates and checks file types before reading.
 
-Normal user workflows use capture, find, tag, index, and upgrade. See [data formats](DATA_FORMATS.md) and [safety](SAFETY.md) for their shared contracts and command-specific differences.
+Normal user workflows use open, capture, import, find, tag, index, and upgrade. See [usage](USAGE.md), [data formats](DATA_FORMATS.md), and [safety](SAFETY.md) for their shared contracts and command-specific differences.
 
 ## Testing and recorded runtime validation
 
@@ -99,6 +104,12 @@ verification does not constitute live playlist validation.
 On macOS Apple Silicon, CPython **3.15.2** ran the current full offline suite: **274 tests, 273 passed, 1 skipped, no failures**. The Unix-socket fixture could not bind in the sandbox (`Operation not permitted`); the other filesystem checks ran. Apple Bash **3.2.57** passed `bash -n scripts/yt-bookmark.sh`. This run includes TXT/playlist stubs, generated JavaScript checks, and synthetic artwork tests; it did not launch a browser, capture screenshots, or contact YouTube.
 
 All user-facing script and documentation-tool `--help` commands returned `0`. An additional disposable synthetic library exercised offline generation/indexing, audit JSON, tag preview/report, upgrade preview, and TXT preview; the preview/query operations preserved library files. Permanent Markdown links/anchors and repository script/test references were checked locally. Dependency installation, live capture/playlist discovery, native artwork rendering, and Linux qualification were not performed in this audit. The optional `python3.14` comparison command remains a recorded workflow, not a claim of a second runtime tested in this run.
+
+### Unified CLI validation (2026-11-26)
+
+On macOS 26.7.3 (Apple Silicon), CPython 3.15.2 ran the full offline suite with Deno 2.9.8 available for JavaScript checks. Of 286 tests, 285 passed and one was skipped because the sandbox refused to bind the existing Unix socket fixture. There were zero failures and zero errors. Apple Bash 3.2.57 passed syntax and dispatch checks.
+
+The opener tests used temporary libraries and harmless launch stubs, including mocked macOS and Linux launcher selection. Dispatch tests checked argument and stream forwarding, representative offline workflows, and importer interruption with process-group cleanup. Real desktop launching and native Linux validation remain outstanding.
 
 ## Development guidance
 
@@ -181,7 +192,7 @@ The staged approach is catalog/CLI inspection and manual management first, then 
 ### Deferred enhancements and investigation
 
 - **Catalog concurrency investigation (low priority proposal):** identify concrete competing read/modify/write sequences and cloud-sync interactions using disposable catalogs. Atomic replacement prevents partial publication but does not merge competing edits. No lost-update incident or exploit has been demonstrated. Assess severity and recommend minimal locking, stale-state detection, documentation, or justified deferral; propose any code separately. Do not assume distributed locks, automatic sync-conflict resolution, or broad NAS guarantees. This investigation does not block all other work.
-- **Graphical tagging and a unified `videx` CLI:** deferred ideas, not approved commitments. Retaining the existing script names is intentional.
+- **Graphical tagging and deeper CLI consolidation:** deferred. The thin `videx` dispatcher is implemented, and retaining the existing script names and command contracts is intentional.
 - **Further source adapters or batch management improvements:** possible future work, with no additional requirements or schedule approved.
 
 Filename-only legacy indexing, major packaging refactors, broad filesystem/NAS certification, and work on a separate offline playlist HTML extraction utility are outside the current roadmap. Live extraction remains a validation gap, not an approved new feature or a prerequisite for offline operation.

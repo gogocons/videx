@@ -4,6 +4,22 @@
 
 Run commands from the repository root. Replace `VIDEO_ID` or `AAAAAAAAAAA` with an actual 11-character YouTube video ID and `/path/to/library` with your library root. Capture, refresh, and playlist discovery use the network; TXT previews and local maintenance work offline. Videx saves metadata and thumbnails, not videos or transcripts.
 
+## Command interface
+
+Run `./videx --help` to see the available commands. From another working directory, invoke the executable by its checkout path, for example `/path/to/videx/videx open`. Relative input and library paths are interpreted from the directory where you run the command.
+
+| Command | Purpose |
+|---|---|
+| `./videx open` | Open the existing offline index. |
+| `./videx capture` | Save or refresh a single video bookmark. |
+| `./videx import` | Preview or apply a TXT or public-playlist import. |
+| `./videx index` | Build the offline search index. |
+| `./videx find` | Look up a video or audit the library. |
+| `./videx tag` | Report or edit personal tags. |
+| `./videx upgrade` | Preview or apply offline bookmark upgrades. |
+
+Use `./videx COMMAND --help` for the command's own options. The six existing workflows retain their original library arguments, write flags, output, and exit statuses. You can still use the direct script invocations shown throughout this guide.
+
 ## Library configuration
 
 Videx source code and personal bookmark data can live in different folders. Copy `config.example.json` to `config.local.json` in the project root, then edit it:
@@ -65,7 +81,7 @@ bash scripts/yt-bookmark.sh --help
 bash scripts/yt-bookmark.sh --re-index 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
-Open the generated `index.html` in your browser. Bookmarks are created under `<library>/bookmarks/<channel>/<title> [video-id].html`. The `bookmarks/` folder is created automatically when saving the first video. No server is needed.
+Run `./videx open` to browse the generated index. Bookmarks are created under `<library>/bookmarks/<channel>/<title> [video-id].html`. The `bookmarks/` folder is created automatically when saving the first video.
 
 ```bash
 # Save a bookmark without rebuilding the index
@@ -120,10 +136,25 @@ For a disposable demonstration library, supply synthetic metadata such as `{"id"
 
 ## Rebuild and browse the offline index
 
+### Open an existing snapshot
+
+```bash
+./videx open
+./videx open --library '/path/to/library'
+```
+
+The opener uses `config.local.json` or falls back to the checkout root when there is no config. An explicit `--library DIR` bypasses local config, even if the config is invalid. Give the library root and quote paths that contain spaces or shell metacharacters. Home-relative paths such as `'~/Documents/Video Bookmarks'` are expanded.
+
+The command requires a readable, nonempty, regular `index.html` and rejects index symlinks. It hands the file to the default HTML application using `open` on macOS or `xdg-open` on Linux. Linux requires a graphical session with `DISPLAY` or `WAYLAND_DISPLAY` set. Opening uses the saved snapshot, so changes to bookmarks or tags appear after a separate rebuild. The opener needs no network, local server, catalog, or bookmark scan.
+
+Status `0` means the desktop launcher accepted the request. Status `1` means the target or launcher could not be used, or the platform is unsupported. Status `2` means the arguments or configuration are invalid.
+
+### Rebuild the snapshot
+
 Without `--re-index`, bookmark capture does **not** rebuild the index. You can rebuild it separately at any time:
 
 ```bash
-python3 -B scripts/yt-bookmark-index.py
+./videx index
 ```
 
 Rebuilding the index excludes every bookmark carrying the reserved personal tag `hidden` (case-insensitive, with surrounding whitespace normalized). Excluded bookmarks contribute no embedded metadata, links, thumbnails, search results, channel listings, or counts. Channels and Single Entries groups are calculated exclusively from visible bookmarks. Other normalized personal tags from the selected library's `catalog.json` appear as wrapping badges on bookmark cards and are searchable through the existing search bar. Each tag supports case-insensitive partial matches. Missing catalogs or tag records produce no tag row; orphan records are ignored. Generated indexes remain self-contained offline.
@@ -274,6 +305,8 @@ See [upgrade failure handling](SAFETY.md#offline-upgrades) before applying a mix
 |---|---|
 | Extraction stops working | Check `yt-dlp --version`, `python3 --version`, and `bash --version`; update yt-dlp using its official installation instructions or your package manager. |
 | Files appear in the wrong location | Check the explicit command path and `config.local.json`; paths select the library root. Invalid configuration fails rather than silently falling back. |
+| `videx open` reports a missing index | Verify the selected library root. To build the snapshot, run `./videx index` or `./videx index '/path/to/library'` for an explicit library. |
+| `videx open` reports a launcher or desktop failure | Run it from a graphical desktop with `open` (macOS) or `xdg-open` (Linux) available on `PATH`. You can also open the reported local index file manually. |
 | Tags or search behavior look stale | Rebuild `index.html`; it contains a snapshot of search code and catalog tags. |
 | A bookmark is absent from the index | Check `hidden`, run the read-only audit, and inspect index warnings for malformed pages. |
 | A catalog operation refuses to proceed | Resolve reported catalog or inventory errors before retrying. Do not treat partial-report unmatched entries as confirmed orphans. |

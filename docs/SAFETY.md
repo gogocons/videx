@@ -76,6 +76,8 @@ For a changed catalog, the writer stages JSON in a unique sibling `.catalog-*.tm
 
 ## Index publication and statuses
 
+`./videx open` hands the existing local index to the desktop's default HTML application. Opening is read-only for Videx and leaves regeneration to `./videx index` or the existing capture and import workflows. The saved snapshot can still show videos tagged `hidden` since the last successful rebuild. See [opening and rebuilding](USAGE.md#rebuild-and-browse-the-offline-index).
+
 Index generation writes a unique temporary file beside `index.html`, then atomically replaces the index. Existing regular-file permissions are preserved; new indexes and replaced symlinks use normal creation permissions respecting the process umask, without writing through symlinks. Concurrent builds publish complete files; the last successful replacement wins.
 
 Rebuild the index after adding or removing `hidden` to apply visibility changes. When valid bookmarks exist but all are hidden, rebuilding succeeds and replaces any older index with an empty-state index. A genuinely empty library or one containing no valid bookmarks retains exit status `1` and leaves any existing index untouched. Malformed, unreadable, symlinked, or non-regular catalogs cause exit status `2` before index writing, even when no valid bookmarks exist, leaving any existing index and its permissions untouched.

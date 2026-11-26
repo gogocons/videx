@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+usage() {
+  cat <<'EOF'
+Usage: ./videx COMMAND [ARGUMENTS ...]
+
+  open     Open the existing library index
+  capture  Save or refresh a video bookmark
+  import   Preview or apply a TXT or public playlist import
+  index    Rebuild the offline library index
+  find     Look up a video or audit the library
+  tag      Inspect or edit personal tags
+  upgrade  Preview or apply offline bookmark upgrades
+
+Run ./videx COMMAND --help for command options.
+EOF
+}
+
+case ${1-} in
+  -h|--help) usage; exit 0 ;;
+esac
+if (( $# == 0 )); then
+  usage >&2
+  exit 2
+fi
+
+case $1 in
+  capture|open|import|index|find|tag|upgrade) ;;
+  *) printf 'videx: unknown command: %s\n' "$1" >&2; exit 2 ;;
+esac
+
+dispatch() {
+  # Use positional parameters so caller environment variables are inherited.
+  if [[ $2 = capture ]]; then
+    exec bash "${1%/*}/scripts/yt-bookmark.sh" "${@:3}"
+  fi
+  exec python3 -B "${1%/*}/scripts/yt-bookmark-$2.py" "${@:3}"
+}
+
+case ${BASH_SOURCE[0]} in
+  /*) dispatch "${BASH_SOURCE[0]}" "$@" ;;
+  *) dispatch "$PWD/${BASH_SOURCE[0]}" "$@" ;;
+esac
