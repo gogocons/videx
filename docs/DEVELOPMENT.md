@@ -144,6 +144,16 @@ long channel name, long capture count, and missing like count.
 - Manual checks verified that the rebuilt index excluded hidden bookmarks and that Collection browsing and keyboard navigation worked in desktop Firefox and Safari.
 - The responsive bookmark layout was accepted and main-library bookmark upgrades completed successfully. After the newline comparison correction, the final offline upgrade preview reported no further upgrades needed.
 
+### v0.5.0 release validation
+
+The earlier sandboxed release-candidate run recorded 323 passes and one skip
+because the sandbox prevented the Unix-socket fixture from binding.
+
+The user confirmed that the complete regression suite ran natively on macOS
+outside the Codex sandbox for the v0.5.0 release baseline (`0831a40`). All 324
+tests passed, with zero failures, zero errors, and zero skips. The run used
+`python3 -B -m unittest discover -s tests -v`.
+
 Native Linux runtime qualification, real desktop opener verification, broader browser coverage, and broader live extraction validation remain open.
 
 ## Development guidance
