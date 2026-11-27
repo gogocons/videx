@@ -6,20 +6,23 @@
 
 This document is the authoritative development status, roadmap, and outstanding-work register. Keep it current when capabilities or decisions change; GitHub Issues may supplement it, but are not required to understand or continue development. Usage contracts belong in [Usage](USAGE.md), [Batch import](BATCH_IMPORT.md), [Safety](SAFETY.md), and [Data formats](DATA_FORMATS.md), rather than separate overlapping roadmaps.
 
-The latest recorded release snapshot is **v0.4.0**. The current source also implements exact personal-tag filtering, TXT and public YouTube playlist importing, the unified `videx` command with local index opening, manual Collection management, offline Collection browsing, and optional report-based Collection creation.
+The latest recorded release snapshot is **v0.4.0**. Development and user acceptance for the upcoming release are complete. The milestones below distinguish the recorded release from work completed since that snapshot.
 
 | Completed milestone | Current capability and evidence |
 |---|---|
 | Standalone capture and library foundations | Offline HTML, curated metadata/thumbnails, external-library configuration, identity-based duplicate prevention, in-place refresh, and offline upgrades; `tests/test_identity_consumers.py` and generator/identity tests. |
 | Personal catalog workflows (v0.3.0) | Capture tagging, preview/apply catalog edits, opt-in tag reports, index badges, guarded pruning, script-context escaping, and atomic index publication; tag/find/index regressions. |
 | Safety and visibility (v0.4.0) | Catalog path/type and tag-element validation, recursive duplicate-key refusal, bookmark filesystem safeguards, numeric validation, tag searching, and complete `hidden` omission; tag/index/inventory/identity-consumer regressions. |
-| Exact tag filtering (after release snapshot) | Unified Channel/Personal Tag Filters panel, chips and reset controls; one exact tag selection combines with channel and free-text search using AND. Unicode tag identity uses Python case-folding; `tests/test_bookmark_index.py`. |
+| Unified index filtering (after release snapshot) | Channel and Personal Tag share a Filters panel with chips and reset controls. One exact tag selection combines with channel and free-text search using AND. Unicode tag identity uses Python case-folding. See `tests/test_bookmark_index.py`. |
 | TXT batch import (after release snapshot) | Offline preview, sequential new captures, existing-ID reuse, per-entry reports, retry by rerunning, and one default final index rebuild after creation; `tests/test_bookmark_import.py`. |
 | Direct public playlist import (after release snapshot) | Full flat yt-dlp discovery before capture, conservative completeness refusal, ordered deduplication, and the shared batch pipeline; `tests/test_playlist_import.py`. No Collection assignment or playlist synchronization. |
 | Unified command and offline index opening (after release snapshot) | `./videx open` opens the saved index through the desktop's HTML association. Six existing workflows are available through direct delegation. Coverage in `tests/test_bookmark_open.py`, `tests/test_videx_cli.py`, and the importer interruption tests. |
 | Collections Milestone 1 (after release snapshot) | `./videx collection` manages local Collection records with preview/apply and shared catalog backups. Coverage in `tests/test_bookmark_collection.py` and the tag, capture, and dispatcher regressions. |
 | Collections Milestone 2 (after release snapshot) | The generated index browses Collections with the shared grid, search, filters, and sort controls. Snapshot projection and generated JavaScript are covered in `tests/test_bookmark_index.py`. |
 | Collections Milestone 3 (after release snapshot) | Playlist reports can provide an offline, library-bound proposal for separate Collection creation. Coverage in `tests/test_playlist_collection.py` includes the explicit index rebuild and hidden payload exclusion. |
+| CLI help and workflow discovery (after release snapshot) | Top-level, import, and Collection help point users to the playlist-to-Collection workflow. `tests/test_videx_cli.py` covers help text and parity with direct script invocations. |
+| Responsive bookmark metadata (after release snapshot) | The standalone Video details grid adapts from three columns to two or one as space narrows. Offline upgrades apply the layout using retained archival metadata and the embedded thumbnail. See `tests/test_identity_consumers.py`. |
+| Upgrade idempotence for description line endings (after release snapshot) | Upgrade comparison preserves CRLF and bare CR in the saved HTML so already-current pages with those description line endings create no rewrite or backup. Regression coverage in `tests/test_identity_consumers.py` checks both preview and apply. |
 
 These milestones describe implementation and offline regression coverage, not live YouTube or cross-platform certification. See [recorded validation](#testing-and-recorded-runtime-validation) and [known limitations](#known-issues-and-limitations).
 
@@ -79,7 +82,7 @@ See [usage](USAGE.md), [data formats](DATA_FORMATS.md), and [safety](SAFETY.md) 
 
 **Runtime validation for v0.4.0:** on macOS (Apple Silicon), the full offline suite ran with CPython **3.15.2** and **3.14.2**: **169 tests per runtime, 168 passed and 1 skipped**, with no failures. The skipped Unix-socket test could not bind a socket in the sandbox; actual FIFO/symlink and mocked special-file checks ran. A separate pre-release snapshot passed all 153 of its tests outside the sandbox, including the real Unix-socket test. Apple **Bash 3.2.57** syntax and capture workflows (using local extractor stubs) were checked.
 
-A short Firefox **160.0** headless smoke test used an offline temporary profile and synthetic files. It checked standalone bookmark display and embedded thumbnails, index rendering, personal-tag searching, `hidden` exclusion, and all-hidden empty-index rendering. This is a limited smoke test, not a browser compatibility matrix. Linux and live yt-dlp extraction have not been validated for this release. No minimum Python version beyond Python 3 has been qualified by a broader version matrix.
+A short Firefox **160.0** headless smoke test used an offline temporary profile and synthetic files. It checked standalone bookmark display and embedded thumbnails, index rendering, personal-tag searching, `hidden` exclusion, and all-hidden empty-index rendering. The v0.4.0 validation did not cover native Linux or live yt-dlp extraction. No minimum Python version beyond Python 3 has been qualified by a broader version matrix.
 
 From the repository root, run the complete offline regression suite with:
 
@@ -128,16 +131,20 @@ integration test captured from a stub playlist, reviewed and applied the report
 with extraction unavailable, and verified one catalog publication and an
 explicit rebuild with hidden bookmarks excluded from the generated payload.
 
-Milestones 1 and 2 passed user acceptance, including desktop browsing in Safari
-and Firefox. The user confirmed Collections acceptance is complete and manual
-hidden-bookmark verification passed in their main library.
-
 ### Bookmark metadata layout validation
 
 An offline Firefox 161.0 headless check used an upgraded synthetic bookmark at
 1200, 550, and 320 CSS pixels. It confirmed three, two, and one column
 respectively, with the original field order and no horizontal overflow with a
 long channel name, long capture count, and missing like count.
+
+### User-reported manual acceptance
+
+- Acceptance testing in a disposable library completed successfully. A public playlist import and separate report-based Collection creation then completed successfully in the main library.
+- Manual checks verified that the rebuilt index excluded hidden bookmarks and that Collection browsing and keyboard navigation worked in desktop Firefox and Safari.
+- The responsive bookmark layout was accepted and main-library bookmark upgrades completed successfully. After the newline comparison correction, the final offline upgrade preview reported no further upgrades needed.
+
+Native Linux runtime qualification, real desktop opener verification, broader browser coverage, and broader live extraction validation remain open.
 
 ## Development guidance
 
@@ -204,7 +211,7 @@ The following objectives have no assigned release or delivery date. Proposed pri
 
 ### Collections milestones
 
-**Milestone 1 — Catalog and manual management (implemented).** Collections are local groups independent of personal tags, channel directories, source playlists, and bookmark HTML. Catalog schema 1 stores stable UUIDv4 records with normalized unique names, optional descriptions, and video-ID membership. A bookmark can belong to several Collections. See the CLI and storage contracts in [Usage](USAGE.md#collection-management), [Data formats](DATA_FORMATS.md#collection-records), and [Safety](SAFETY.md#collection-mutations-and-inspection).
+**Milestone 1 — Catalog and manual management (implemented).** Collections are local groups independent of personal tags, channel directories, source playlists, and bookmark HTML. Catalog schema 1 stores stable UUIDv4 records with normalized unique names, optional descriptions, and video-ID membership. Membership survives a file rename when the bookmark still resolves to the same ID. A bookmark can belong to several Collections. Catalog mutations preview by default, require `--apply` to save, and appear in the index after an explicit offline rebuild. See the CLI and storage contracts in [Usage](USAGE.md#collection-management), [Data formats](DATA_FORMATS.md#collection-records), and [Safety](SAFETY.md#collection-mutations-and-inspection).
 
 **Ordering decision.** Custom ordering is deferred. The member array preserves first-occurrence append order and the relative order of surviving members. Playlist proposals preserve source sequence internally. Array order is a storage property. The initial milestones include no manual reorder command, positioning, drag-and-drop, or Collection-specific sort mode.
 
@@ -216,26 +223,28 @@ All Bookmarks and Collections share **Newest**, **Oldest**, **Title A-Z**, **Tit
 
 **Milestone 3 — Optional playlist-to-Collection creation (implemented).** Use `import --playlist URL --propose-collection` to add an opt-in extension to the version 1 import report. Import preview shows candidates and distinguishes existing bookmarks from those awaiting capture. A completed applied import can propose the playlist title, description, and confirmed local members in first-occurrence playlist sequence. Use `collection from-import REPORT` to review a saved JSON report offline (`-` reads stdin). Repeat with `--apply` after approval. `--name` and `--description` override the defaults, and an empty description clears it. Decline simply by leaving the proposal unapplied. Completed imports with per-entry omissions require `--accept-partial` on apply. Empty membership, interrupted or refused discovery, and interrupted or stopped acquisition provide no applicable proposal. Index failures are reported separately from acquisition.
 
-Bind eligible reports to the canonical library path and the device/inode identity of both the library root and its `bookmarks/` directory. Revalidate the entire proposed membership against strict live inventory during preview and apply. A name conflict requires another name or skipping, including on repeated apply. Publish a new Collection with all members in one existing catalog mutation. Capture success survives later catalog failure. Keep playlist state in the report and preserve ordinary import and indexing defaults. Use `--no-re-index` during integrated import and explicitly rebuild once after approval and Collection creation. GUI management and automatic playlist synchronization are outside these milestones.
+Eligible reports are bound to the canonical library path and the device/inode identity of both the library root and its `bookmarks/` directory. Preview and apply revalidate the entire proposed membership against the current local inventory. A name conflict requires another name or skipping, including on repeated apply. A new Collection is published with all members in one catalog mutation. Capture success survives later catalog failure. Importing only records playlist state in the report. Collection creation requires its own approval. Use `--no-re-index` during integrated import and explicitly rebuild once after approval and Collection creation. GUI management and automatic playlist synchronization are outside these milestones.
 
-Workflow and report details are in [Batch import](BATCH_IMPORT.md#playlist-to-collection) and [Data formats](DATA_FORMATS.md#playlist-collection-report-extension). See [the validation record](#collections-milestone-3-validation) for user acceptance.
+Workflow and report details are in [Batch import](BATCH_IMPORT.md#playlist-to-collection) and [Data formats](DATA_FORMATS.md#playlist-collection-report-extension). See [automated validation](#collections-milestone-3-validation) and [user-reported manual acceptance](#user-reported-manual-acceptance).
 
 ### Deferred enhancements and investigation
 
 - **Catalog concurrency investigation (low priority proposal):** identify concrete competing read/modify/write sequences and cloud-sync interactions using disposable catalogs. Atomic replacement prevents partial publication but does not merge competing edits. No lost-update incident or exploit has been demonstrated. Assess severity and recommend minimal locking, stale-state detection, documentation, or justified deferral; propose any code separately. Do not assume distributed locks, automatic sync-conflict resolution, or broad NAS guarantees. This investigation does not block all other work.
-- **Graphical tagging and deeper CLI consolidation:** deferred. The thin `videx` dispatcher is implemented, and retaining the existing script names and command contracts is intentional.
+- **Upstream request minimization:** Minimize unnecessary upstream requests by reusing locally acquired metadata and validated discovery results wherever practical. The playlist import report already supports offline organization after acquisition. Playlist previews, applied imports, and recovery retries can still repeat upstream discovery. Investigate reusable playlist discovery snapshots to eliminate that redundancy while preserving explicit user approval, data validation, and offline-first operation. Snapshot design and implementation remain open.
+- **Graphical tagging and Collection management:** Deferred interface features with no approved design or schedule. Custom Collection ordering also remains deferred under the [ordering decision](#collections-milestones).
+- **Deeper CLI consolidation:** Deferred. The thin `videx` dispatcher is implemented, and retaining the existing script names and command contracts is intentional.
 - **Further source adapters or batch management improvements:** possible future work, with no additional requirements or schedule approved.
 
-Filename-only legacy indexing, major packaging refactors, broad filesystem/NAS certification, and work on a separate offline playlist HTML extraction utility are outside the current roadmap. Live extraction remains a validation gap, not an approved new feature or a prerequisite for offline operation.
+Filename-only legacy indexing, major packaging refactors, broad filesystem/NAS certification, and work on a separate offline playlist HTML extraction utility are outside the current roadmap. Broader live extraction coverage remains a validation gap. Offline workflows remain independent of extraction.
 
 ## Known issues and limitations
 
 | Finding | Status and practical consequence |
 |---|---|
-| Linux/runtime coverage | Open validation work, not a confirmed portability bug; exact environments tested are recorded above. Browser checks are limited smoke tests. |
+| Linux/runtime coverage | Native Linux runtime and real desktop opener qualification remain open. The browser evidence covers specific smoke checks and manual acceptance workflows. |
 | Upgrade partial-result statuses | Open contract decision; a successful status can coexist with skipped malformed pages. Inspect warnings before applying. No behavior change is approved. |
 | Catalog concurrency | Source-confirmed lack of a lock/stale-state check across read/modify/write; potential lost updates are not runtime-reproduced incidents. Coordinate writers. Ordinary catalog symlink/type validation is already fixed and is distinct from races after checks. |
-| Import availability/completeness | Offline stubs validate orchestration, not current YouTube extraction. Playlist discovery refuses even benign stderr warnings and cannot independently prove YouTube exposed every entry when counts are absent. Private/account lists, authentication, mixes, synchronization and playlist deletion are unsupported. See [batch limits](BATCH_IMPORT.md#public-playlist-discovery-and-completeness). |
+| Import availability/completeness | Offline stubs validate orchestration. User-reported live playlist acceptance covers a specific workflow. Playlist discovery refuses even benign stderr warnings and cannot independently prove YouTube exposed every entry when counts are absent. Private/account lists, authentication, mixes, synchronization and playlist deletion are unsupported. See [batch limits](BATCH_IMPORT.md#public-playlist-discovery-and-completeness). |
 | Import filesystem and recovery | Create-only publication requires hard links. Completed bookmarks survive later failures; a hard kill can leave staging files or a stale index. Rerun to skip saved IDs and retry; no checkpoint database or automatic rollback. |
 | Independent publication stages | Capture, tagging and indexing are not a transaction. Upgrade replacement is per file; catalog/index atomic publication is not library-wide locking or power-loss durability. See [Safety](SAFETY.md). |
 | Visibility and archival scope | `hidden` omits entries only from a rebuilt index; files/catalog/reports and older snapshots remain accessible. No video playback or transcript preservation; metadata/counts reflect capture time. |

@@ -271,10 +271,12 @@ Ctrl-C during discovery returns `130` without starting captures.
 
 After discovery, both sources use the same deduplication, inventory planning,
 sequential capture, create-only publication, interruption, and index pipeline.
-Repeated playlist IDs are reported as duplicate input and processed once. Repeating
-the same import rediscovers the playlist and skips saved IDs, retrying entries that
-previously failed. A changing playlist or counts that disagree with the enumerated
-entries may require retrying discovery. Missing optional counts are allowed when
+Repeated playlist IDs are reported as duplicate input and processed once. Playlist
+imports that pass local preflight perform discovery on each run, so an applied
+import after preview or a recovery retry can repeat discovery. On a rerun, saved
+IDs are reused without individual extraction and remaining entries can be retried.
+A changing playlist or counts that disagree with the enumerated entries may require
+retrying discovery. Missing optional counts are allowed when
 there is no evidence of truncation; the importer cannot independently prove that
 YouTube exposed every entry. The import report retains playlist order and metadata.
 Collection creation is a separate local catalog operation using the completed report.

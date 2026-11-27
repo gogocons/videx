@@ -21,6 +21,8 @@ Run `./videx --help` to see the available commands. From another working directo
 
 Use `./videx COMMAND --help` for the command's own options. You can still use the direct script invocations shown throughout this guide.
 
+For the playlist-to-Collection workflow, `./videx import --help` shows how to save a report, and `./videx collection from-import --help` covers offline review and apply. [Playlist-to-Collection walkthrough](BATCH_IMPORT.md#playlist-to-collection)
+
 ## Library configuration
 
 Videx source code and personal bookmark data can live in different folders. Copy `config.example.json` to `config.local.json` in the project root, then edit it:

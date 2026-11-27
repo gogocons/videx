@@ -2,10 +2,10 @@
 
 [Back to README](../../README.md) · [Development](../DEVELOPMENT.md)
 
-`library.png` and `bookmark.png` are the current documentation screenshots,
-representing the refreshed Videx demo and current interface, including selective
-personal tags in the library. They have passed technical and privacy verification
-and are approved for documentation use. The original historical screenshots remain
+`library.png` and `bookmark.png` are the approved documentation screenshots.
+They illustrate the demo with personal tags and predate the unified Filters panel,
+Collection browsing, and the responsive Video details grid. They passed technical
+and privacy verification at approval. The original historical screenshots remain
 the reference for reproducing the established rounded-corner transparency treatment.
 Preparation creates separate review candidates; it never approves or replaces the
 current screenshots. These screenshots are not pixel-exact current UI tests.
