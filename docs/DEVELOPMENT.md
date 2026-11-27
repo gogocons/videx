@@ -6,23 +6,23 @@
 
 This document is the authoritative development status, roadmap, and outstanding-work register. Keep it current when capabilities or decisions change; GitHub Issues may supplement it, but are not required to understand or continue development. Usage contracts belong in [Usage](USAGE.md), [Batch import](BATCH_IMPORT.md), [Safety](SAFETY.md), and [Data formats](DATA_FORMATS.md), rather than separate overlapping roadmaps.
 
-The latest recorded release snapshot is **v0.4.0**. Development and user acceptance for the upcoming release are complete. The milestones below distinguish the recorded release from work completed since that snapshot.
+The latest recorded release snapshot is **v0.5.0**. The milestones below identify completed work by release.
 
 | Completed milestone | Current capability and evidence |
 |---|---|
 | Standalone capture and library foundations | Offline HTML, curated metadata/thumbnails, external-library configuration, identity-based duplicate prevention, in-place refresh, and offline upgrades; `tests/test_identity_consumers.py` and generator/identity tests. |
 | Personal catalog workflows (v0.3.0) | Capture tagging, preview/apply catalog edits, opt-in tag reports, index badges, guarded pruning, script-context escaping, and atomic index publication; tag/find/index regressions. |
 | Safety and visibility (v0.4.0) | Catalog path/type and tag-element validation, recursive duplicate-key refusal, bookmark filesystem safeguards, numeric validation, tag searching, and complete `hidden` omission; tag/index/inventory/identity-consumer regressions. |
-| Unified index filtering (after release snapshot) | Channel and Personal Tag share a Filters panel with chips and reset controls. One exact tag selection combines with channel and free-text search using AND. Unicode tag identity uses Python case-folding. See `tests/test_bookmark_index.py`. |
-| TXT batch import (after release snapshot) | Offline preview, sequential new captures, existing-ID reuse, per-entry reports, retry by rerunning, and one default final index rebuild after creation; `tests/test_bookmark_import.py`. |
-| Direct public playlist import (after release snapshot) | Full flat yt-dlp discovery before capture, conservative completeness refusal, ordered deduplication, and the shared batch pipeline; `tests/test_playlist_import.py`. No Collection assignment or playlist synchronization. |
-| Unified command and offline index opening (after release snapshot) | `./videx open` opens the saved index through the desktop's HTML association. Six existing workflows are available through direct delegation. Coverage in `tests/test_bookmark_open.py`, `tests/test_videx_cli.py`, and the importer interruption tests. |
-| Collections Milestone 1 (after release snapshot) | `./videx collection` manages local Collection records with preview/apply and shared catalog backups. Coverage in `tests/test_bookmark_collection.py` and the tag, capture, and dispatcher regressions. |
-| Collections Milestone 2 (after release snapshot) | The generated index browses Collections with the shared grid, search, filters, and sort controls. Snapshot projection and generated JavaScript are covered in `tests/test_bookmark_index.py`. |
-| Collections Milestone 3 (after release snapshot) | Playlist reports can provide an offline, library-bound proposal for separate Collection creation. Coverage in `tests/test_playlist_collection.py` includes the explicit index rebuild and hidden payload exclusion. |
-| CLI help and workflow discovery (after release snapshot) | Top-level, import, and Collection help point users to the playlist-to-Collection workflow. `tests/test_videx_cli.py` covers help text and parity with direct script invocations. |
-| Responsive bookmark metadata (after release snapshot) | The standalone Video details grid adapts from three columns to two or one as space narrows. Offline upgrades apply the layout using retained archival metadata and the embedded thumbnail. See `tests/test_identity_consumers.py`. |
-| Upgrade idempotence for description line endings (after release snapshot) | Upgrade comparison preserves CRLF and bare CR in the saved HTML so already-current pages with those description line endings create no rewrite or backup. Regression coverage in `tests/test_identity_consumers.py` checks both preview and apply. |
+| Unified index filtering (v0.5.0) | Channel and Personal Tag share a Filters panel with chips and reset controls. One exact tag selection combines with channel and free-text search using AND. Unicode tag identity uses Python case-folding. See `tests/test_bookmark_index.py`. |
+| TXT batch import (v0.5.0) | Offline preview, sequential new captures, existing-ID reuse, per-entry reports, retry by rerunning, and one default final index rebuild after creation; `tests/test_bookmark_import.py`. |
+| Direct public playlist import (v0.5.0) | Full flat yt-dlp discovery before capture, conservative completeness refusal, ordered deduplication, and the shared batch pipeline; `tests/test_playlist_import.py`. No Collection assignment or playlist synchronization. |
+| Unified command and offline index opening (v0.5.0) | `./videx open` opens the saved index through the desktop's HTML association. Six existing workflows are available through direct delegation. Coverage in `tests/test_bookmark_open.py`, `tests/test_videx_cli.py`, and the importer interruption tests. |
+| Collections Milestone 1 (v0.5.0) | `./videx collection` manages local Collection records with preview/apply and shared catalog backups. Coverage in `tests/test_bookmark_collection.py` and the tag, capture, and dispatcher regressions. |
+| Collections Milestone 2 (v0.5.0) | The generated index browses Collections with the shared grid, search, filters, and sort controls. Snapshot projection and generated JavaScript are covered in `tests/test_bookmark_index.py`. |
+| Collections Milestone 3 (v0.5.0) | Playlist reports can provide an offline, library-bound proposal for separate Collection creation. Coverage in `tests/test_playlist_collection.py` includes the explicit index rebuild and hidden payload exclusion. |
+| CLI help and workflow discovery (v0.5.0) | Top-level, import, and Collection help point users to the playlist-to-Collection workflow. `tests/test_videx_cli.py` covers help text and parity with direct script invocations. |
+| Responsive bookmark metadata (v0.5.0) | The standalone Video details grid adapts from three columns to two or one as space narrows. Offline upgrades apply the layout using retained archival metadata and the embedded thumbnail. See `tests/test_identity_consumers.py`. |
+| Upgrade idempotence for description line endings (v0.5.0) | Upgrade comparison preserves CRLF and bare CR in the saved HTML so already-current pages with those description line endings create no rewrite or backup. Regression coverage in `tests/test_identity_consumers.py` checks both preview and apply. |
 
 These milestones describe implementation and offline regression coverage, not live YouTube or cross-platform certification. See [recorded validation](#testing-and-recorded-runtime-validation) and [known limitations](#known-issues-and-limitations).
 
@@ -172,9 +172,21 @@ introduced. Rendering differences require visual review before accepting artwork
 
 **v0.4.0 milestone:** A small suite of scripts with channel-organized bookmarks, curated metadata, a separate personal-tag catalog, capture tagging, opt-in text/JSON tag reports, and catalog-aware offline index cards. Identity checks, duplicate prevention, in-place refreshes, offline upgrades, previews and backups preserve existing formats. The original `yt-bookmark-*` script names are retained intentionally.
 
-Current index behavior includes personal-tag searching, exact personal-tag filtering in a unified Filters panel, and `hidden` exclusion. The historical notes below describe the release snapshot; they do not override the [current features](../README.md#current-features) or [current index workflow](USAGE.md#rebuild-and-browse-the-offline-index). Original script names remain intentional.
+Current index behavior includes Collection browsing, personal-tag searching, exact personal-tag filtering in a unified Filters panel, and `hidden` exclusion. See [current features](../README.md#current-features) and the [current index workflow](USAGE.md#rebuild-and-browse-the-offline-index).
 
 ## Historical release notes
+
+### v0.5.0 release notes
+
+- Unified Channel and Personal Tag filtering in the offline index, with removable filter chips and support for combining filters with search.
+- Added batch imports from TXT files and direct imports from public YouTube playlists. Both reuse existing bookmarks and report results per entry. TXT previews work offline, while playlist discovery and new captures require yt-dlp and network access.
+- Added the unified `./videx` command, improved help for import and Collection workflows, and added `./videx open` to open the saved index in the desktop's default HTML application.
+- Added catalog-backed Collections with preview and explicit apply. Rebuild the index to browse Collections offline with the same search, filters, and sorting.
+- Added an optional playlist import report handoff for reviewing and creating a Collection offline as a separate step.
+- Made the standalone Video details panel responsive. Fixed offline upgrade comparisons so already-current bookmarks with CRLF or bare CR descriptions avoid redundant rewrites and backups.
+- Consolidated the usage, batch import, data format, and safety guides and expanded the development records for validation and remaining work.
+
+Catalog schema **1** and bookmark metadata schema **2** are unchanged. Lookup/audit, import, and Collection reports use version **1**. Existing libraries require no data migration or recapture, and existing `yt-bookmark-*` commands remain supported. Rebuild the saved index with `./videx index` to pick up the new browsing features. To refresh existing bookmark layouts, preview with `./videx upgrade` and use `--apply` to save changes with backups. Collection-aware commands and index generation require valid records in the catalog's `collections` section. See [offline upgrades](USAGE.md#offline-bookmark-upgrades) and [Collection records](DATA_FORMATS.md#collection-records).
 
 ### v0.4.0 release notes
 

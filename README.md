@@ -1,7 +1,7 @@
 # Videx
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue)
-![Version](https://img.shields.io/badge/Version-v0.4.0-red)
+![Version](https://img.shields.io/badge/Version-v0.5.0-red)
 ![Python](https://img.shields.io/badge/Python-3-blue)
 ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-lightgrey)
 
@@ -15,15 +15,15 @@ The project currently focuses on YouTube and uses [yt-dlp](https://github.com/yt
 
 ### Video Library
 
-Browse, search, filter channels, and sort saved references offline.
+The default offline library view shows all bookmarks, with the unified **Filters** button and **Newest** sorting.
 
-![Videx video library](docs/screenshots/library.png)
+![Videx library with search, a Filters button, and ten demo video cards sorted by Newest](docs/screenshots/library.png)
 
 ### Individual Bookmarks
 
-Each standalone page contains a thumbnail, description, metadata, and links to the original video.
+Each standalone bookmark includes an embedded thumbnail and a responsive **Video details** panel, shown here in three columns and two rows.
 
-![Videx individual bookmark](docs/screenshots/bookmark.png)
+![Standalone Videx bookmark with a video thumbnail and a three-column, two-row Video details panel](docs/screenshots/bookmark.png)
 
 ## Current features
 
@@ -36,7 +36,7 @@ Each standalone page contains a thumbnail, description, metadata, and links to t
 - Upgrade saved bookmark pages offline, using previews and backups, and keep your library outside the source repository.
 - Import a TXT backlog or public YouTube playlist with read-only previews, duplicate checks, per-entry results, and one final index rebuild.
 
-The current source includes manual Collection management, offline Collection browsing, and optional playlist-derived Collections. The v0.4.0 badge identifies the recorded release snapshot. [Collections milestones](docs/DEVELOPMENT.md#collections-milestones)
+The v0.5.0 release includes manual Collection management, offline Collection browsing, and optional Collection creation from playlist import reports. [Release notes](docs/DEVELOPMENT.md#v050-release-notes) · [Collections milestones](docs/DEVELOPMENT.md#collections-milestones)
 
 Preview a TXT backlog with `./videx import --file backlog.txt` or preview a
 public playlist with `./videx import --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'`.

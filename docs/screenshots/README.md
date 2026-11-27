@@ -2,13 +2,13 @@
 
 [Back to README](../../README.md) · [Development](../DEVELOPMENT.md)
 
-`library.png` and `bookmark.png` are the approved documentation screenshots.
-They illustrate the demo with personal tags and predate the unified Filters panel,
-Collection browsing, and the responsive Video details grid. They passed technical
-and privacy verification at approval. The original historical screenshots remain
-the reference for reproducing the established rounded-corner transparency treatment.
-Preparation creates separate review candidates; it never approves or replaces the
-current screenshots. These screenshots are not pixel-exact current UI tests.
+`library.png` and `bookmark.png` are the approved v0.5.0 documentation screenshots.
+The library shows the default **All Bookmarks** view with the unified **Filters**
+button, **Newest** sorting, and ten demo cards. The standalone bookmark shows the
+responsive **Video details** panel at three columns and two rows. Both are
+1440 × 900 (8:5), 8-bit RGBA PNGs and passed technical, visual, and privacy review.
+The original screenshots remain the reference for the rounded-corner transparency
+treatment. The approved screenshots serve as documentation illustrations.
 
 ## Firefox capture recipe
 
